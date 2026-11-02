@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build source
+        shell: pwsh
+        run: ./rebuild-bat.ps1
+
+      - name: PowerShell syntax check
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './src/RustOptimizer.ps1'),
+            [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'Syntax OK'
+
+      - name: Self test
+        shell: powershell
+        run: ./src/RustOptimizer.ps1 -SelfTest

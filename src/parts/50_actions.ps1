@@ -1,0 +1,489 @@
+﻿# ============================================================
+#  ДЕЙСТВИЯ И ТАЙМЕРЫ
+# ============================================================
+function Update-BindListBox {
+    if (-not $script:BindListBox -or $script:BindListBox.IsDisposed) { return }
+    $script:BindListBox.BeginUpdate()
+    $script:BindListBox.Items.Clear()
+    foreach ($b in @(Get-BindRecords)) {
+        [void]$script:BindListBox.Items.Add('bind ' + $b.Key + '   →   ' + $b.Cmd)
+    }
+    $script:BindListBox.EndUpdate()
+}
+
+function Add-BindFromUi {
+    if (-not $script:BindKeyBox -or -not $script:BindCmdBox) { return }
+    if ($script:BindKeyBox.IsDisposed -or $script:BindCmdBox.IsDisposed) { return }
+    $err = Add-RustBind ([string]$script:BindKeyBox.Text) ([string]$script:BindCmdBox.Text)
+    if ($err) {
+        Set-Status $err '#FF6B62'
+        Write-Log $err 'warn'
+        return
+    }
+    $k = ([string]$script:BindKeyBox.Text).Trim().ToLower()
+    $c = ([string]$script:BindCmdBox.Text).Trim()
+    $script:BindCmdBox.Text = ''
+    Update-BindListBox
+    Set-Status ('Бинд добавлен: ' + $k + ' → ' + $c) '#4ECB71'
+    Write-Log ('Бинд: ' + $k + ' → ' + $c) 'ok'
+}
+
+function Apply-BindsFromUi {
+    try {
+        Apply-RustBinds
+        Set-Status 'Бинды записаны в keys.cfg' '#4ECB71'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            "Бинды записаны в cfg\keys.cfg.`n`nПолностью закройте Rust и запустите снова — игра прочитает файл при старте.",
+            'PURPLE RUSH', 'OK', 'Information')
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log $msg 'err'
+        if (Test-RustRunning) {
+            $a = [System.Windows.Forms.MessageBox]::Show(
+                ($msg + "`n`nСкопировать команды для консоли F1?"),
+                'PURPLE RUSH', 'YesNo', 'Warning')
+            if ($a -eq 'Yes') { Copy-BindsFromUi }
+        } else {
+            [void][System.Windows.Forms.MessageBox]::Show($msg, 'PURPLE RUSH', 'OK', 'Warning')
+        }
+    }
+}
+
+function Copy-BindsFromUi {
+    $lines = @(Get-BindCommandLines)
+    if ($lines.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show('Список биндов пуст.', 'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    if (Copy-Text (($lines -join "`r`n") + "`r`n")) {
+        Set-Status 'Бинды скопированы в буфер обмена' '#4ECB71'
+        Write-Log 'Бинды скопированы в буфер обмена' 'ok'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            "Команды скопированы.`n`nВ игре нажмите F1, вставьте (Ctrl+V) и нажмите Enter.",
+            'PURPLE RUSH', 'OK', 'Information')
+    } else {
+        [void][System.Windows.Forms.MessageBox]::Show('Не удалось скопировать в буфер обмена.', 'PURPLE RUSH', 'OK', 'Warning')
+    }
+}
+
+function Show-TextDialog {
+    param([string]$Title, [string]$Body)
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = $Title
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.FormBorderStyle = 'Sizable'
+    $dlg.MinimizeBox     = $false
+    $dlg.BackColor       = [RustSuite.Theme]::Bg
+    $dlg.ForeColor       = [RustSuite.Theme]::TextC
+    $dlg.Font            = [RustSuite.Theme]::FSub
+    $dlg.Size            = New-Object System.Drawing.Size (S 640), (S 460)
+    $dlg.MinimumSize     = New-Object System.Drawing.Size (S 480), (S 340)
+
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Multiline   = $true
+    $tb.ReadOnly    = $true
+    $tb.ScrollBars  = 'Both'
+    $tb.WordWrap    = $false
+    $tb.BorderStyle = 'None'
+    $tb.BackColor   = [RustSuite.Theme]::Field
+    $tb.ForeColor   = [RustSuite.Theme]::TextC
+    $tb.Font        = [RustSuite.Theme]::FMono
+    $tb.Dock        = 'Fill'
+    $tb.Text        = $Body
+
+    $bar = New-Object System.Windows.Forms.Panel
+    $bar.Dock      = 'Bottom'
+    $bar.Height    = S 58
+    $bar.BackColor = [RustSuite.Theme]::PanelBg
+
+    $btnCopy = New-Object RustSuite.FlatButton
+    $btnCopy.Style  = 'Primary'
+    $btnCopy.Text   = 'КОПИРОВАТЬ'
+    $btnCopy.Bounds = New-Object System.Drawing.Rectangle (S 16), (S 12), (S 170), (S 36)
+    $btnCopy.Tag    = $tb
+    $btnCopy.Add_Click({
+        param($s, $e)
+        if ($s.Tag -and (Copy-Text $s.Tag.Text)) { Write-Log 'Текст скопирован в буфер обмена' 'ok' }
+    })
+
+    $btnClose = New-Object RustSuite.FlatButton
+    $btnClose.Style  = 'Ghost'
+    $btnClose.Text   = 'ЗАКРЫТЬ'
+    $btnClose.Bounds = New-Object System.Drawing.Rectangle (S 196), (S 12), (S 130), (S 36)
+    $btnClose.Add_Click({ param($s, $e) $f = $s.FindForm(); if ($f) { $f.Close() } })
+
+    $bar.Controls.AddRange(@($btnCopy, $btnClose))
+    $dlg.Controls.Add($tb)
+    $dlg.Controls.Add($bar)
+    [void]$dlg.ShowDialog($form)
+}
+
+function Show-ConsoleCommands {
+    $all = @()
+    $all += Get-RustCfgCommandText
+    $all += Get-BindCommandLines
+    if ($all.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show(
+            'Нет ни конваров, ни биндов. Добавьте бинды на вкладке «БИНДЫ».',
+            'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    $body = ($all -join "`r`n")
+    $body += "`r`n"
+    $ok = Copy-Text $body
+    if ($ok) { Write-Log 'Команды Rust скопированы в буфер обмена' 'ok' }
+    Show-TextDialog 'RUST · команды для консоли F1' $body
+}
+
+function Rust-OneClickFromUi {
+    if ($script:Busy) { return }
+    $a = [System.Windows.Forms.MessageBox]::Show(
+        ("Записать в Rust:`n`n· траву/пост-эффекты (cfg\client.cfg)`n· ваши бинды (cfg\keys.cfg)`n`nRust должен быть закрыт. Продолжить?"),
+        'PURPLE RUSH', 'YesNo', 'Question')
+    if ($a -ne 'Yes') { return }
+    $res = [string](Invoke-RustOneClick)
+    if ($script:ActiveGroup -eq 'rust') { Show-Group 'rust' }
+    [void][System.Windows.Forms.MessageBox]::Show($res, 'PURPLE RUSH', 'OK', 'Information')
+}
+
+function Update-Stats {
+    $cpu = -1
+    $ram = -1
+    try {
+        # Единый кэшированный датчик: не создаём второй PerformanceCounter
+        # и не опрашиваем его чаще раза в секунду.
+        if (Get-Command Get-CpuLoadFast -ErrorAction SilentlyContinue) {
+            $cpu = [int](Get-CpuLoadFast)
+        } else {
+            if (-not $script:PcCpu) {
+                $script:PcCpu = New-Object System.Diagnostics.PerformanceCounter('Processor', '% Processor Time', '_Total')
+                $null = $script:PcCpu.NextValue()
+            }
+            $cpu = [int][Math]::Round([double]$script:PcCpu.NextValue())
+        }
+        if ($cpu -lt 0) { $cpu = 0 }
+        if ($cpu -gt 100) { $cpu = 100 }
+    } catch { $cpu = -1 }
+
+    try {
+        # ОЗУ через WinAPI: мгновенно, без WMI и без подвисаний интерфейса.
+        $ram = [int][RustSuite.Native]::MemLoad()
+        $totalMb = [long][RustSuite.Native]::MemTotalMb()
+        if ($totalMb -gt 0) { $script:RamTotal = [double]$totalMb }
+    } catch {
+        $ram = -1
+        try {
+            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+            $script:RamTotal = [double]$os.TotalVisibleMemorySize / 1024.0
+            $ram = [int][Math]::Round((1.0 - ([double]$os.FreePhysicalMemory / [double]$os.TotalVisibleMemorySize)) * 100.0)
+        } catch { $ram = -1 }
+    }
+
+    if ($script:CpuBar -and -not $script:CpuBar.IsDisposed) {
+        if ($cpu -ge 0) {
+            $script:CpuBar.Value = $cpu
+            $script:CpuVal.Text  = [string]$cpu + ' %'
+            $script:CpuVal.ForeColor = if ($cpu -ge 85) { [RustSuite.Theme]::Err }
+                                      elseif ($cpu -ge 60) { [RustSuite.Theme]::Warn }
+                                      else { [RustSuite.Theme]::TextC }
+        } else {
+            $script:CpuBar.Value = 0
+            $script:CpuVal.Text  = 'н/д'
+        }
+    }
+    if ($script:RamBar -and -not $script:RamBar.IsDisposed) {
+        if ($ram -ge 0) {
+            $script:RamBar.Value = $ram
+            $script:RamVal.Text  = [string]$ram + ' %'
+            $script:RamVal.ForeColor = if ($ram -ge 90) { [RustSuite.Theme]::Err }
+                                      elseif ($ram -ge 75) { [RustSuite.Theme]::Warn }
+                                      else { [RustSuite.Theme]::TextC }
+        } else {
+            $script:RamBar.Value = 0
+            $script:RamVal.Text  = 'н/д'
+        }
+    }
+
+    $script:RustRunning = Test-RustRunning
+    if ($script:RustState -and -not $script:RustState.IsDisposed) {
+        if (-not $script:RustExe) {
+            $script:RustState.Text = 'не найден — запустите игру через Steam'
+            $script:RustState.ForeColor = [RustSuite.Theme]::Warn
+        } elseif ($script:RustRunning) {
+            $script:RustState.Text = 'запущен · приоритет High · бинды активны'
+            $script:RustState.ForeColor = [RustSuite.Theme]::Ok
+        } else {
+            $script:RustState.Text = 'готов · cfg можно менять'
+            $script:RustState.ForeColor = [RustSuite.Theme]::Muted
+        }
+    }
+    if ($script:Header -and -not $script:Header.IsDisposed) { $script:Header.Invalidate() }
+}
+
+# ---------- Запуск Rust ----------
+$script:LaunchTries = 0
+$script:LaunchTimer = New-Object System.Windows.Forms.Timer
+$script:LaunchTimer.Interval = 2000
+$script:LaunchTimer.Add_Tick({
+    $p = @(Get-Process -Name 'RustClient' -ErrorAction SilentlyContinue)
+    if ($p.Count -gt 0) {
+        Invoke-RustProcessPolish
+        Write-Log 'RustClient запущен — приоритет High применён' 'ok'
+        Set-Status 'RUST запущен, оптимизация применена' '#4ECB71'
+        $script:LaunchTimer.Stop()
+        Update-Stats
+
+        # Автозакрытие: даём увидеть статус и закрываем оптимизатор.
+        if ($script:AutoClose -and $script:MainForm -and -not $script:MainForm.IsDisposed) {
+            Set-Status 'RUST запущен — закрываю оптимизатор…' '#4ECB71'
+            Write-Log 'Автозакрытие оптимизатора через 2 секунды' 'info'
+            try {
+                if ($script:CloseTimer) { $script:CloseTimer.Stop(); $script:CloseTimer.Dispose() }
+                $script:CloseTimer = New-Object System.Windows.Forms.Timer
+                $script:CloseTimer.Interval = 2000
+                $script:CloseTimer.Add_Tick({
+                    try { $script:CloseTimer.Stop(); $script:CloseTimer.Dispose() } catch {}
+                    $script:CloseTimer = $null
+                    if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+                        $script:MainForm.Close()
+                    }
+                })
+                $script:CloseTimer.Start()
+            } catch {
+                Write-Log ('Автозакрытие недоступно: ' + $_.Exception.Message) 'warn'
+            }
+        }
+    } else {
+        $script:LaunchTries--
+        if ($script:LaunchTries -le 0) {
+            $script:LaunchTimer.Stop()
+            Write-Log 'RustClient не появился за 3 минуты — откройте игру вручную' 'warn'
+            Set-Status 'RUST не запустился автоматически' '#E3B341'
+        }
+    }
+})
+
+function Start-Rust {
+    if ($script:Busy) { return }
+    try {
+        [System.Diagnostics.Process]::Start('steam://rungameid/252490') | Out-Null
+        Write-Log 'Запуск RUST через Steam…' 'step'
+        Set-Status 'Ожидание процесса RustClient.exe…' '#FF8A4C'
+        $script:LaunchTries = 90
+        $script:LaunchTimer.Start()
+    } catch {
+        Write-Log ('Не удалось запустить Steam: ' + $_.Exception.Message) 'err'
+    }
+}
+
+# ---------- Кнопки ----------
+$btnSafe.Add_Click({
+    foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = (-not $t.Risk) }
+    $script:State['Enabled'] = $script:Enabled
+    Save-State
+    Show-Group $script:ActiveGroup
+    Write-Log 'Профиль «Безопасный»: только проверенные модули' 'info'
+})
+
+$btnMax.Add_Click({
+    foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = $true }
+    $script:State['Enabled'] = $script:Enabled
+    Save-State
+    Show-Group $script:ActiveGroup
+    Write-Log 'Профиль «Максимум»: включены все модули, включая рискованные' 'warn'
+})
+
+$btnRun.Add_Click({
+    if ($script:Busy) { return }
+    $cnt = @($script:Tweaks | Where-Object { $script:Enabled[$_.Id] }).Count
+    if ($cnt -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show(
+            'Не выбран ни один модуль. Отметьте карточки или нажмите «МАКСИМУМ».',
+            'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Применить модулей: $cnt`n`nБудет создана точка восстановления и резервные копии реестра.`nПродолжить?"),
+        'PURPLE RUSH', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+
+    $btnRun.Enabled  = $false
+    $btnUndo.Enabled = $false
+    try {
+        $n = Start-Optimization
+
+        $ansReboot = [System.Windows.Forms.MessageBox]::Show(
+            ("Готово. Применено модулей: $n.`n`nДля применения всех изменений нужна перезагрузка ПК.`nПерезагрузить сейчас?`n`nОК — перезагрузка через 10 секунд (несохранённые файлы будут закрыты).`nОтмена — перезагрузите вручную позже."),
+            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OKCancel', 'Question', 'Button1')
+
+        if ($ansReboot -eq 'OK') {
+            $scheduled = $false
+            Write-Log 'Запланирована автоматическая перезагрузка ПК через 10 секунд' 'warn'
+            Set-Status 'Перезагрузка ПК через 10 секунд…' '#FF8A4C'
+
+            # Важно: одна строка аргументов — иначе /c "..." разбивается на части
+            # и shutdown.exe завершается с ошибкой, не перезагружая ПК.
+            try {
+                $shutdown = Join-Path $env:SystemRoot 'System32\shutdown.exe'
+                $shArgs = '/r /t 10 /f /c "PURPLE RUSH: применение оптимизации"'
+                $proc = Start-Process -FilePath $shutdown -ArgumentList $shArgs -WindowStyle Hidden -PassThru -ErrorAction Stop
+                try { [void]$proc.WaitForExit(3000) } catch {}
+                if ($proc.HasExited -and $proc.ExitCode -ne 0) {
+                    Write-Log ('shutdown.exe вернул код ' + $proc.ExitCode + ' — пробую Restart-Computer') 'warn'
+                } else {
+                    $scheduled = $true
+                }
+            } catch {
+                Write-Log ('shutdown.exe недоступен: ' + $_.Exception.Message) 'warn'
+            }
+
+            if (-not $scheduled) {
+                try {
+                    Restart-Computer -Force -ErrorAction Stop
+                    $scheduled = $true
+                    Write-Log 'Перезагрузка запущена через Restart-Computer' 'warn'
+                } catch {
+                    Write-Log ('Restart-Computer не сработал: ' + $_.Exception.Message) 'err'
+                }
+            }
+
+            if (-not $scheduled) {
+                [void][System.Windows.Forms.MessageBox]::Show(
+                    ("Не удалось перезагрузить ПК автоматически.`n`nЗапустите программу от имени администратора`nили перезагрузите компьютер вручную.`n`nЖурнал: $($script:LogFile)"),
+                    'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Warning')
+            }
+        } else {
+            [void][System.Windows.Forms.MessageBox]::Show(
+                ("Перезагрузка отложена.`nЖурнал: $($script:LogFile)"),
+                'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Information')
+        }
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Log ('Ошибка оптимизации: ' + $msg) 'err'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Ошибка оптимизации: $msg`n`nЖурнал: $($script:LogFile)"),
+            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Error')
+    } finally {
+        $btnRun.Enabled  = $true
+        $btnUndo.Enabled = $true
+        Update-Stats
+    }
+})
+
+$btnUndo.Add_Click({
+    if ($script:Busy) { return }
+    $applied = @(Get-AppliedTweaks)
+    if ($applied.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show(
+            'Откатывать нечего: в журнале нет применённых модулей.',
+            'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Вернуть систему к значениям до оптимизации?`n`nМодулей в откате: " + $applied.Count + ".`nОткатятся реестр, службы, план питания, DNS и cfg Rust."),
+        'PURPLE RUSH', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+
+    $btnRun.Enabled  = $false
+    $btnUndo.Enabled = $false
+    try {
+        Start-Rollback
+        [void][System.Windows.Forms.MessageBox]::Show('Откат выполнен.', 'PURPLE RUSH', 'OK', 'Information')
+    } finally {
+        $btnRun.Enabled  = $true
+        $btnUndo.Enabled = $true
+        Update-Stats
+    }
+})
+
+# ---------- Жизненный цикл ----------
+$form.Add_FormClosing({
+    param($s, $e)
+    if ($script:Busy) {
+        $a = [System.Windows.Forms.MessageBox]::Show(
+            'Оптимизация ещё выполняется. Прервать?', 'PURPLE RUSH', 'YesNo', 'Warning')
+        if ($a -ne 'Yes') { $e.Cancel = $true; return }
+    }
+    try { $script:StatsTimer.Stop() } catch {}
+    try { $script:LaunchTimer.Stop() } catch {}
+    if ($script:State['TimerOn']) { try { [RustSuite.Native]::TimerStop() } catch {} }
+})
+
+$form.Add_Shown({
+    [void][RustSuite.Native]::DarkTitle($form)
+    [void][RustSuite.Native]::DarkScroll($script:RowHost)
+    [void][RustSuite.Native]::DarkScroll($script:LogBox)
+
+    Show-Group 'sys'
+    Update-Stats
+
+    Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
+    Write-Log ('Права администратора: ' + $(if ($script:IsAdmin) { 'да' } else { 'НЕТ — часть функций не сработает' })) $(if ($script:IsAdmin) { 'info' } else { 'warn' })
+    Write-Log ('Steam: ' + $(if ($script:SteamPath) { $script:SteamPath } else { 'не найден' })) 'info'
+    Write-Log ('RUST: ' + $(if ($script:RustExe) { $script:RustExe } else { 'не найден' })) 'info'
+    try {
+        $cores = (Get-CimInstance Win32_Processor | Select-Object -First 1).NumberOfCores
+        Write-Log ('Физических ядер: ' + $cores) 'info'
+    } catch {}
+    Write-Log 'Бинды и cfg — официальные файлы игры; exe/dll не изменяются.' 'info'
+    Write-Log 'Выберите модули и нажмите «ОПТИМИЗИРОВАТЬ ПК».' 'info'
+
+    $script:StatsTimer = New-Object System.Windows.Forms.Timer
+    $script:StatsTimer.Interval = 2500
+    $script:StatsTimer.Add_Tick({ Update-Stats })
+    $script:StatsTimer.Start()
+
+    if ($script:TestUi) {
+        $script:ProbeStep = 0
+        $script:ProbeTimer = New-Object System.Windows.Forms.Timer
+        $script:ProbeTimer.Interval = 450
+        $script:ProbeTimer.Add_Tick({
+            try {
+                switch ($script:ProbeStep) {
+                    0 { Show-Group 'sys' }
+                    1 { Show-Group 'net' }
+                    2 { Show-Group 'rust' }
+                    3 { Show-Group 'binds' }
+                    4 { Show-Group 'clean' }
+                    5 {
+                        Show-Group 'settings'
+                    }
+                    6 {
+                        Apply-Theme 'ТЁМНО-СИНЯЯ' -Save
+                        Update-ThemeSurfaces
+                        Restart-SettingsSoon
+                    }
+                    7 {
+                        Show-Group 'sys'
+                        $c = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] }) | Select-Object -First 1
+                        if ($c) { $c.On = (-not $c.On); $c.On = (-not $c.On) }
+                        Update-Stats
+                    }
+                    8 {
+                        Apply-Theme 'ПУРПУРНАЯ' -Save
+                        Update-ThemeSurfaces
+                        Write-Host 'UI TEST OK'
+                        $script:ProbeTimer.Stop()
+                        $form.Close()
+                    }
+                }
+            } catch {
+                Write-Host ('UI TEST FAIL: ' + $_.Exception.Message)
+                Write-Host $_.ScriptStackTrace
+                try { $script:ProbeTimer.Stop() } catch {}
+                $form.Close()
+            }
+            $script:ProbeStep = $script:ProbeStep + 1
+        })
+        $script:ProbeTimer.Start()
+    }
+})
+
+[System.Windows.Forms.Application]::add_ThreadException({
+    param($s, $e)
+    $msg = ''
+    if ($e -and $e.Exception) { $msg = $e.Exception.Message }
+    Write-Log ('Ошибка интерфейса: ' + $msg) 'err'
+})
+
+[System.Windows.Forms.Application]::Run($form)

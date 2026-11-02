@@ -1,0 +1,595 @@
+﻿# ============================================================
+#  НАСТРОЙКИ: ТЕМЫ + МОНИТОРИНГ
+#  ВАЖНО: этот файл загружается ДО 40_ui.ps1, поэтому функция
+#  Show-SettingsPanel уже существует к моменту первого Show-Group.
+# ============================================================
+function S([double]$v) { return [int][math]::Round($v * $script:SC) }
+
+# ---------- Палитры ----------
+$script:Themes = @(
+    @{ Name='ПУРПУРНАЯ';  Bg=[System.Drawing.Color]::FromArgb(18,10,28);  Panel=[System.Drawing.Color]::FromArgb(28,15,42);  Card=[System.Drawing.Color]::FromArgb(36,20,58);  CardHover=[System.Drawing.Color]::FromArgb(48,28,72);  Border=[System.Drawing.Color]::FromArgb(70,45,110);  Accent=[System.Drawing.Color]::FromArgb(160,60,220);  AccentLt=[System.Drawing.Color]::FromArgb(200,100,255); TextC=[System.Drawing.Color]::FromArgb(245,240,255); Muted=[System.Drawing.Color]::FromArgb(170,150,190); Ok=[System.Drawing.Color]::FromArgb(120,200,120); Warn=[System.Drawing.Color]::FromArgb(240,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,14,38) },
+    @{ Name='ТЁМНО-СИНЯЯ'; Bg=[System.Drawing.Color]::FromArgb(10,14,26); Panel=[System.Drawing.Color]::FromArgb(16,20,36); Card=[System.Drawing.Color]::FromArgb(22,26,48); CardHover=[System.Drawing.Color]::FromArgb(30,36,60); Border=[System.Drawing.Color]::FromArgb(50,60,100); Accent=[System.Drawing.Color]::FromArgb(60,120,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,160,255); TextC=[System.Drawing.Color]::FromArgb(230,235,245); Muted=[System.Drawing.Color]::FromArgb(140,150,170); Ok=[System.Drawing.Color]::FromArgb(80,220,130);  Warn=[System.Drawing.Color]::FromArgb(250,190,50);   Err=[System.Drawing.Color]::FromArgb(255,90,110);  Field=[System.Drawing.Color]::FromArgb(14,16,30) },
+    @{ Name='ИЗУМРУДНАЯ';  Bg=[System.Drawing.Color]::FromArgb(10,20,14); Panel=[System.Drawing.Color]::FromArgb(15,28,20); Card=[System.Drawing.Color]::FromArgb(20,36,28); CardHover=[System.Drawing.Color]::FromArgb(28,48,36); Border=[System.Drawing.Color]::FromArgb(60,100,70);  Accent=[System.Drawing.Color]::FromArgb(60,220,100); AccentLt=[System.Drawing.Color]::FromArgb(100,255,150); TextC=[System.Drawing.Color]::FromArgb(240,245,235); Muted=[System.Drawing.Color]::FromArgb(160,175,160); Ok=[System.Drawing.Color]::FromArgb(100,240,120); Warn=[System.Drawing.Color]::FromArgb(240,210,60);   Err=[System.Drawing.Color]::FromArgb(240,100,110); Field=[System.Drawing.Color]::FromArgb(12,18,14) },
+    @{ Name='КРИМСОН';     Bg=[System.Drawing.Color]::FromArgb(26,10,14); Panel=[System.Drawing.Color]::FromArgb(36,15,22); Card=[System.Drawing.Color]::FromArgb(48,22,30); CardHover=[System.Drawing.Color]::FromArgb(60,30,42); Border=[System.Drawing.Color]::FromArgb(110,45,70); Accent=[System.Drawing.Color]::FromArgb(255,60,90);  AccentLt=[System.Drawing.Color]::FromArgb(255,120,140); TextC=[System.Drawing.Color]::FromArgb(245,230,235); Muted=[System.Drawing.Color]::FromArgb(180,140,160); Ok=[System.Drawing.Color]::FromArgb(100,220,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(30,12,16) }
+)
+
+$script:ThemeName = 'ПУРПУРНАЯ'
+
+function Set-ThemeColors {
+    param($Palette)
+    if (-not $Palette) { return }
+    [RustSuite.Theme]::Bg        = $Palette.Bg
+    [RustSuite.Theme]::PanelBg   = $Palette.Panel
+    [RustSuite.Theme]::CardBg    = $Palette.Card
+    [RustSuite.Theme]::CardHover = $Palette.CardHover
+    [RustSuite.Theme]::BorderC   = $Palette.Border
+    [RustSuite.Theme]::Accent    = $Palette.Accent
+    [RustSuite.Theme]::AccentLt  = $Palette.AccentLt
+    [RustSuite.Theme]::TextC     = $Palette.TextC
+    [RustSuite.Theme]::Muted     = $Palette.Muted
+    [RustSuite.Theme]::Ok        = $Palette.Ok
+    [RustSuite.Theme]::Warn      = $Palette.Warn
+    [RustSuite.Theme]::Err       = $Palette.Err
+    [RustSuite.Theme]::Field     = $Palette.Field
+}
+
+function Apply-Theme {
+    param([string]$Name, [switch]$Save)
+    $pal = $script:Themes | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    if (-not $pal) { $pal = $script:Themes[0] }
+    $script:PrevPalette = $script:CurrentPalette
+    Set-ThemeColors $pal
+    $script:CurrentPalette = $pal
+    $script:ThemeName = $pal.Name
+    if ($Save) {
+        $script:State['Theme'] = $pal.Name
+        Save-State
+    }
+}
+
+# Применяем сохранённую тему ещё до создания окон.
+if ($script:State['Theme']) { Apply-Theme ([string]$script:State['Theme']) }
+else { Apply-Theme $script:Themes[0].Name }
+
+function Update-ControlTree {
+    param($Root)
+    if (-not $Root) { return }
+    foreach ($c in @($Root.Controls)) {
+        if (-not $c) { continue }
+        try {
+            if ($c -is [System.Windows.Forms.Label]) {
+                $pv = $script:PrevPalette
+                if ($pv) {
+                    if ($c.BackColor.ToArgb() -eq $pv.Bg.ToArgb()) { $c.BackColor = [RustSuite.Theme]::Bg }
+                    elseif ($c.BackColor.ToArgb() -eq $pv.Panel.ToArgb()) { $c.BackColor = [RustSuite.Theme]::PanelBg }
+                    if ($c.ForeColor.ToArgb() -eq $pv.Muted.ToArgb()) { $c.ForeColor = [RustSuite.Theme]::Muted }
+                    elseif ($c.ForeColor.ToArgb() -eq $pv.TextC.ToArgb()) { $c.ForeColor = [RustSuite.Theme]::TextC }
+                } elseif ($c.BackColor -ne [System.Drawing.Color]::Transparent) {
+                    $c.BackColor = [RustSuite.Theme]::Bg
+                }
+            } elseif ($c -is [System.Windows.Forms.TextBox]) {
+                $c.BackColor = [RustSuite.Theme]::Field
+                $c.ForeColor = [RustSuite.Theme]::TextC
+            }
+        } catch {}
+        if ($c.HasChildren) { Update-ControlTree $c }
+    }
+}
+
+function Update-ThemeSurfaces {
+    try { if ($script:MainForm -and -not $script:MainForm.IsDisposed) { $script:MainForm.BackColor = [RustSuite.Theme]::Bg } } catch {}
+    $pairs = @(
+        @{ N='FooterPanel';  C='Panel' }, @{ N='NavPanel';      C='Bg' },
+        @{ N='NavTopPanel';  C='Bg' },    @{ N='NavBottomPanel'; C='Bg' },
+        @{ N='BodyPanel';    C='Bg' },    @{ N='ContentWrap';   C='Bg' },
+        @{ N='RightCol';     C='Panel' }, @{ N='StatsPanel';    C='Panel' },
+        @{ N='LogPanel';     C='Panel' }, @{ N='LogHost';       C='Panel' }
+    )
+    foreach ($p in $pairs) {
+        try {
+            $v = Get-Variable -Name $p.N -Scope Script -ErrorAction SilentlyContinue
+            if ($v -and $v.Value -and -not $v.Value.IsDisposed) {
+                if ($p.C -eq 'Panel') { $v.Value.BackColor = [RustSuite.Theme]::PanelBg }
+                else { $v.Value.BackColor = [RustSuite.Theme]::Bg }
+            }
+        } catch {}
+    }
+    try { if ($script:Status) { $script:Status.ForeColor = [RustSuite.Theme]::Muted } } catch {}
+    try {
+        if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+            Update-ControlTree $script:MainForm
+            $script:MainForm.Invalidate($true)
+        }
+    } catch {}
+}
+
+# Перестроить панель настроек после смены темы (безопасно, вне обработчика клика).
+function Restart-SettingsSoon {
+    try {
+        if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose() }
+        $script:ThemeTimer = New-Object System.Windows.Forms.Timer
+        $script:ThemeTimer.Interval = 40
+        $script:ThemeTimer.Add_Tick({
+            try { $script:ThemeTimer.Stop() } catch {}
+            # Перестраиваем только если пользователь всё ещё на странице настроек.
+            if ($script:ActiveGroup -eq 'settings') {
+                try { Show-Group 'settings' } catch {}
+            }
+        })
+        $script:ThemeTimer.Start()
+    } catch {}
+}
+
+# ---------- Быстрые датчики (без WMI на каждом тике) ----------
+function Get-CpuLoadFast {
+    param([switch]$Force)
+    $now = Get-Date
+    try {
+        # PerformanceCounter нельзя опрашивать чаще ~1 раза в секунду:
+        # иначе он возвращает 0 и график «дёргается».
+        if (-not $Force -and $script:CpuSampleAt -and
+            ($now - $script:CpuSampleAt).TotalMilliseconds -lt 900) {
+            return [int]$script:CpuSample
+        }
+    } catch {}
+    try {
+        if (-not $script:PcCpu) {
+            $script:PcCpu = New-Object System.Diagnostics.PerformanceCounter('Processor', '% Processor Time', '_Total')
+            [void]$script:PcCpu.NextValue()
+        }
+        $v = [int][Math]::Round([double]$script:PcCpu.NextValue())
+        if ($v -lt 0) { $v = 0 }
+        if ($v -gt 100) { $v = 100 }
+        $script:CpuSampleAt = $now
+        $script:CpuSample   = $v
+        return $v
+    } catch { return -1 }
+}
+
+function Get-RamLoadFast {
+    try {
+        $m = [RustSuite.Native]::MemLoad()
+        if ($m -ge 0) { return [int]$m }
+    } catch {}
+    return -1
+}
+
+function Get-GpuNameFast {
+    if ($script:GpuName) { return $script:GpuName }
+    $name = ''
+    try {
+        $base = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+        $keys = @(Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue |
+                  Where-Object { $_.PSChildName -match '^\d{4}$' })
+        foreach ($k in $keys) {
+            $d = (Get-ItemProperty -LiteralPath $k.PSPath -Name 'DriverDesc' -ErrorAction SilentlyContinue).DriverDesc
+            if ($d) { $name = [string]$d; break }
+        }
+    } catch {}
+    if (-not $name) {
+        try {
+            $name = [string]((Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+                              Select-Object -First 1).Name)
+        } catch {}
+    }
+    if (-not $name) { $name = 'не определён' }
+    $script:GpuName = $name
+    return $name
+}
+
+function Get-AcpiTemp {
+    # WMI-датчик опрашиваем не чаще раза в 30 секунд: он медленный.
+    try {
+        if ($script:AcpiTempAt -and ((Get-Date) - $script:AcpiTempAt).TotalSeconds -lt 30) {
+            return $script:AcpiTempCache
+        }
+    } catch {}
+    $script:AcpiTempAt = Get-Date
+    $script:AcpiTempCache = $null
+    try {
+        $z = @(Get-CimInstance -Namespace 'root/wmi' -ClassName 'MSAcpi_ThermalZoneTemperature' -ErrorAction SilentlyContinue)
+        foreach ($t in $z) {
+            $c = [double]$t.CurrentTemperature / 10.0 - 273.15
+            if ($c -gt 1 -and $c -lt 125) { $script:AcpiTempCache = [math]::Round($c, 1); break }
+        }
+    } catch {}
+    return $script:AcpiTempCache
+}
+
+# Один раз собираем сведения о ПК — для карточки «Система».
+function Get-SystemReport {
+    if ($script:SysReportCache) { return [string]$script:SysReportCache }
+    $lines = New-Object System.Collections.Generic.List[string]
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($os) {
+            $ver = ([string]$os.Caption).Trim()
+            $lines.Add(('ОС: ' + $ver + ' ' + [string]$os.Version + ' (build ' + [string]$os.BuildNumber + ')'))
+        }
+    } catch {}
+    try {
+        $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cpu) {
+            $name = ([string]$cpu.Name).Trim() -replace '\s+', ' '
+            $lines.Add(('CPU: ' + $name))
+            $lines.Add(('Ядра / потоки: ' + [string]$cpu.NumberOfCores + ' / ' + [string]$cpu.NumberOfLogicalProcessors))
+        }
+    } catch {}
+    try { $lines.Add(('GPU: ' + (Get-GpuNameFast))) } catch {}
+    try {
+        $total = [long][RustSuite.Native]::MemTotalMb()
+        $free  = [long][RustSuite.Native]::MemFreeMb()
+        if ($total -gt 0) { $lines.Add(('ОЗУ: {0:N0} МБ всего, {1:N0} МБ свободно' -f $total, $free)) }
+    } catch {}
+    try {
+        $lines.Add('Права: ' + $(if ($script:IsAdmin) { 'администратор' } else { 'обычный пользователь' }))
+        $lines.Add('Steam: ' + $(if ($script:SteamPath) { [string]$script:SteamPath } else { 'не найден' }))
+        $lines.Add('RUST: ' + $(if ($script:RustExe) { [string]$script:RustExe } else { 'не найден' }))
+    } catch {}
+    $txt = ($lines -join "`r`n")
+    $script:SysReportCache = $txt
+    return $txt
+}
+
+function Update-SettingsMonitor {
+    $barCpu = $script:SetCpuBar
+    $valCpu = $script:SetValCpu
+    $barRam = $script:SetRamBar
+    $valRam = $script:SetValRam
+    try {
+        if ($barCpu -and -not $barCpu.IsDisposed) {
+            $cpu = Get-CpuLoadFast
+            if ($cpu -ge 0) {
+                $barCpu.Value = $cpu
+                if ($valCpu -and -not $valCpu.IsDisposed) {
+                    $valCpu.Text = ('{0} %' -f $cpu)
+                    $valCpu.ForeColor = if ($cpu -ge 85) { [RustSuite.Theme]::Err }
+                                        elseif ($cpu -ge 60) { [RustSuite.Theme]::Warn }
+                                        else { [RustSuite.Theme]::TextC }
+                }
+            } elseif ($valCpu -and -not $valCpu.IsDisposed) {
+                $valCpu.Text = 'н/д'
+            }
+        }
+    } catch {}
+
+    try {
+        if ($barRam -and -not $barRam.IsDisposed) {
+            $ram = Get-RamLoadFast
+            $totalMb = 0
+            try { $totalMb = [long][RustSuite.Native]::MemTotalMb() } catch {}
+            if ($ram -ge 0) {
+                $barRam.Value = $ram
+                if ($valRam -and -not $valRam.IsDisposed) {
+                    if ($totalMb -gt 0) { $valRam.Text = ('{0} % · {1:N0} МБ' -f $ram, $totalMb) }
+                    else { $valRam.Text = ('{0} %' -f $ram) }
+                    $valRam.ForeColor = if ($ram -ge 90) { [RustSuite.Theme]::Err }
+                                        elseif ($ram -ge 75) { [RustSuite.Theme]::Warn }
+                                        else { [RustSuite.Theme]::TextC }
+                }
+            } elseif ($valRam -and -not $valRam.IsDisposed) {
+                $valRam.Text = 'н/д'
+            }
+        }
+    } catch {}
+}
+
+function Read-SettingsTemps {
+    $lines = New-Object System.Collections.Generic.List[string]
+    try {
+        $cpu = Get-CpuLoadFast
+        if ($cpu -ge 0) { $lines.Add(('CPU: загрузка {0} %' -f $cpu)) }
+    } catch {}
+    try {
+        $ram = Get-RamLoadFast
+        $freeMb  = [long][RustSuite.Native]::MemFreeMb()
+        $totalMb = [long][RustSuite.Native]::MemTotalMb()
+        if ($ram -ge 0) {
+            if ($totalMb -gt 0) { $lines.Add(('ОЗУ: {0:N0} МБ свободно / {1:N0} МБ всего ({2} %)' -f $freeMb, $totalMb, $ram)) }
+            else { $lines.Add(('ОЗУ: загрузка {0} %' -f $ram)) }
+        }
+    } catch {}
+    try {
+        $acpi = Get-AcpiTemp
+        if ($null -ne $acpi) { $lines.Add(('Температура (ACPI): {0} °C' -f $acpi)) }
+        else { $lines.Add('Температура (ACPI): датчик недоступен') }
+    } catch {
+        $lines.Add('Температура (ACPI): датчик недоступен')
+    }
+    try { $lines.Add(('GPU: ' + (Get-GpuNameFast))) } catch {}
+    $lines.Add('')
+    $lines.Add('Примечание: Windows не отдаёт температуру ядер CPU/GPU')
+    $lines.Add('без фирменного драйвера. ACPI-датчик есть не на всех ПК.')
+    return ($lines -join "`r`n")
+}
+
+# ---------- Панель настроек ----------
+function Show-SettingsPanel {
+    $w = $script:RowHost.ClientSize.Width - (S 22)
+    if ($w -lt (S 340)) { $w = (S 340) }
+
+    # Заголовок
+    $accentBar = New-Object System.Windows.Forms.Panel
+    $accentBar.BackColor = [RustSuite.Theme]::Accent
+    $accentBar.Bounds    = New-Object System.Drawing.Rectangle 0, (S 5), (S 3), (S 15)
+    $script:RowHost.Controls.Add($accentBar)
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text      = 'НАСТРОЙКИ · ТЕМЫ И МОНИТОРИНГ'
+    $head.Font      = [RustSuite.Theme]::FHead
+    $head.ForeColor = [RustSuite.Theme]::TextC
+    $head.BackColor = [System.Drawing.Color]::Transparent
+    $head.AutoSize  = $false
+    $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), (S 2), (S 460), (S 22)
+    $script:RowHost.Controls.Add($head)
+
+    # --- Темы ---
+    $lblTheme = New-Object System.Windows.Forms.Label
+    $lblTheme.Text      = 'ТЕМА ОФОРМЛЕНИЯ · применяется сразу'
+    $lblTheme.Font      = [RustSuite.Theme]::FHead
+    $lblTheme.ForeColor = [RustSuite.Theme]::Muted
+    $lblTheme.BackColor = [System.Drawing.Color]::Transparent
+    $lblTheme.AutoSize  = $false
+    $lblTheme.Bounds    = New-Object System.Drawing.Rectangle 0, (S 30), $w, (S 16)
+    $script:RowHost.Controls.Add($lblTheme)
+
+    $btnY = S 52
+    $btnH = S 34
+    $gap  = S 8
+    $sw   = S 8
+    $colW = [int](($w - $gap) / 2)
+    $idx  = 0
+    foreach ($t in $script:Themes) {
+        $rx = if ($idx % 2 -eq 0) { 0 } else { $colW + $gap }
+        $ry = $btnY + [int]([Math]::Floor($idx / 2) * ($btnH + $gap))
+
+        $swatch = New-Object System.Windows.Forms.Panel
+        $swatch.BackColor = $t.Accent
+        $swatch.Bounds    = New-Object System.Drawing.Rectangle $rx, $ry, $sw, $btnH
+        $script:RowHost.Controls.Add($swatch)
+
+        $btn = New-Object RustSuite.FlatButton
+        $btn.Text   = $(if ($t.Name -eq $script:ThemeName) { '✓ ' + $t.Name } else { $t.Name })
+        $btn.Font   = [RustSuite.Theme]::FBtn
+        $btn.Style  = $(if ($t.Name -eq $script:ThemeName) { 'Primary' } else { 'Ghost' })
+        $btn.Bounds = New-Object System.Drawing.Rectangle ($rx + $sw), $ry, ($colW - $sw), $btnH
+        $btn.Tag    = $t
+        $btn.Add_Click({
+            param($s, $e)
+            $th = $s.Tag
+            Apply-Theme $th.Name -Save
+            Update-ThemeSurfaces
+            Write-Log ('Тема изменена: ' + $th.Name) 'ok'
+            Set-Status ('Тема: ' + $th.Name) '#8B949E'
+            Restart-SettingsSoon
+        })
+        $script:RowHost.Controls.Add($btn)
+        $idx++
+    }
+
+    $y = $btnY + [int]([Math]::Ceiling($idx / 2) * ($btnH + $gap)) + (S 12)
+
+    # --- Система ---
+    $lblSys = New-Object System.Windows.Forms.Label
+    $lblSys.Text      = 'СИСТЕМА · этот компьютер'
+    $lblSys.Font      = [RustSuite.Theme]::FHead
+    $lblSys.ForeColor = [RustSuite.Theme]::Muted
+    $lblSys.BackColor = [System.Drawing.Color]::Transparent
+    $lblSys.AutoSize  = $false
+    $lblSys.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblSys)
+    $y += S 22
+
+    $sysBox = New-Object System.Windows.Forms.TextBox
+    $sysBox.Multiline   = $true
+    $sysBox.ReadOnly    = $true
+    $sysBox.ScrollBars  = 'Vertical'
+    $sysBox.BorderStyle = 'FixedSingle'
+    $sysBox.BackColor   = [RustSuite.Theme]::Field
+    $sysBox.ForeColor   = [RustSuite.Theme]::TextC
+    $sysBox.Font        = [RustSuite.Theme]::FMono
+    $sysBox.Bounds      = New-Object System.Drawing.Rectangle 0, $y, $w, (S 112)
+    $sysBox.Anchor      = 'Top,Left,Right'
+    $sysBox.Text        = Get-SystemReport
+    $script:RowHost.Controls.Add($sysBox)
+    $y += S 120
+
+    $btnCopySys = New-Object RustSuite.FlatButton
+    $btnCopySys.Style  = 'Ghost'
+    $btnCopySys.Text   = 'СКОПИРОВАТЬ ОТЧЁТ О СИСТЕМЕ'
+    $btnCopySys.Font   = [RustSuite.Theme]::FSmall
+    $btnCopySys.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 32)
+    $btnCopySys.Tag    = $sysBox
+    $btnCopySys.Add_Click({
+        param($s, $e)
+        if ($s.Tag -and (Copy-Text $s.Tag.Text)) {
+            Set-Status 'Отчёт о системе скопирован' '#4ECB71'
+            Write-Log 'Отчёт о системе скопирован в буфер обмена' 'ok'
+        }
+    })
+    $script:RowHost.Controls.Add($btnCopySys)
+    $y += S 44
+
+    # --- Поведение ---
+    $lblBeh = New-Object System.Windows.Forms.Label
+    $lblBeh.Text      = 'ПОВЕДЕНИЕ'
+    $lblBeh.Font      = [RustSuite.Theme]::FHead
+    $lblBeh.ForeColor = [RustSuite.Theme]::Muted
+    $lblBeh.BackColor = [System.Drawing.Color]::Transparent
+    $lblBeh.AutoSize  = $false
+    $lblBeh.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblBeh)
+    $y += S 22
+
+    $chkAutoClose = New-Object System.Windows.Forms.CheckBox
+    $chkAutoClose.Text      = 'Закрывать оптимизатор после запуска RUST'
+    $chkAutoClose.Font      = [RustSuite.Theme]::FSub
+    $chkAutoClose.ForeColor = [RustSuite.Theme]::TextC
+    $chkAutoClose.BackColor = [System.Drawing.Color]::Transparent
+    $chkAutoClose.FlatStyle = 'Flat'
+    $chkAutoClose.AutoSize  = $false
+    $chkAutoClose.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 24)
+    $chkAutoClose.Checked   = [bool]$script:AutoClose
+    $chkAutoClose.Add_CheckedChanged({
+        param($s, $e)
+        $script:AutoClose = [bool]$s.Checked
+        $script:State['AutoClose'] = $script:AutoClose
+        Save-State
+        Set-Status $(if ($script:AutoClose) { 'Автозакрытие после запуска RUST включено' } else { 'Автозакрытие отключено' }) '#8B949E'
+    })
+    $script:RowHost.Controls.Add($chkAutoClose)
+    $y += S 28
+
+    $lblBehHint = New-Object System.Windows.Forms.Label
+    $lblBehHint.Text      = 'После нажатия «ЗАПУСТИТЬ RUST» программа дождётся RustClient.exe и закроется сама.'
+    $lblBehHint.Font      = [RustSuite.Theme]::FSmall
+    $lblBehHint.ForeColor = [RustSuite.Theme]::Muted
+    $lblBehHint.BackColor = [System.Drawing.Color]::Transparent
+    $lblBehHint.AutoSize  = $false
+    $lblBehHint.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 30)
+    $script:RowHost.Controls.Add($lblBehHint)
+    $y += S 42
+
+    # --- Мониторинг ---
+    $lblMon = New-Object System.Windows.Forms.Label
+    $lblMon.Text      = 'МОНИТОРИНГ · обновляется автоматически'
+    $lblMon.Font      = [RustSuite.Theme]::FHead
+    $lblMon.ForeColor = [RustSuite.Theme]::Muted
+    $lblMon.BackColor = [System.Drawing.Color]::Transparent
+    $lblMon.AutoSize  = $false
+    $lblMon.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblMon)
+    $y += S 24
+
+    $lblCpu = New-Object System.Windows.Forms.Label
+    $lblCpu.Text      = 'ЗАГРУЗКА CPU'
+    $lblCpu.Font      = [RustSuite.Theme]::FSmall
+    $lblCpu.ForeColor = [RustSuite.Theme]::Muted
+    $lblCpu.BackColor = [System.Drawing.Color]::Transparent
+    $lblCpu.AutoSize  = $false
+    $lblCpu.Bounds    = New-Object System.Drawing.Rectangle 0, $y, ([int]($w * 0.62)), (S 16)
+    $script:RowHost.Controls.Add($lblCpu)
+
+    $valCpu = New-Object System.Windows.Forms.Label
+    $valCpu.Text      = '—'
+    $valCpu.Font      = [RustSuite.Theme]::FSmall
+    $valCpu.ForeColor = [RustSuite.Theme]::TextC
+    $valCpu.BackColor = [System.Drawing.Color]::Transparent
+    $valCpu.AutoSize  = $false
+    $valCpu.TextAlign = 'MiddleRight'
+    $valCpu.Bounds    = New-Object System.Drawing.Rectangle ([int]($w * 0.62)), $y, ([int]($w * 0.38)), (S 16)
+    $script:RowHost.Controls.Add($valCpu)
+    $y += S 20
+
+    $barCpu = New-Object RustSuite.ProgressStrip
+    $barCpu.Shimmer = $true
+    $barCpu.Value   = 0
+    $barCpu.Bounds  = New-Object System.Drawing.Rectangle 0, $y, $w, (S 10)
+    $barCpu.BackColor = [System.Drawing.Color]::Transparent
+    $script:RowHost.Controls.Add($barCpu)
+    $y += S 22
+
+    $lblRam = New-Object System.Windows.Forms.Label
+    $lblRam.Text      = 'ЗАГРУЗКА ОЗУ'
+    $lblRam.Font      = [RustSuite.Theme]::FSmall
+    $lblRam.ForeColor = [RustSuite.Theme]::Muted
+    $lblRam.BackColor = [System.Drawing.Color]::Transparent
+    $lblRam.AutoSize  = $false
+    $lblRam.Bounds    = New-Object System.Drawing.Rectangle 0, $y, ([int]($w * 0.62)), (S 16)
+    $script:RowHost.Controls.Add($lblRam)
+
+    $valRam = New-Object System.Windows.Forms.Label
+    $valRam.Text      = '—'
+    $valRam.Font      = [RustSuite.Theme]::FSmall
+    $valRam.ForeColor = [RustSuite.Theme]::TextC
+    $valRam.BackColor = [System.Drawing.Color]::Transparent
+    $valRam.AutoSize  = $false
+    $valRam.TextAlign = 'MiddleRight'
+    $valRam.Bounds    = New-Object System.Drawing.Rectangle ([int]($w * 0.62)), $y, ([int]($w * 0.38)), (S 16)
+    $script:RowHost.Controls.Add($valRam)
+    $y += S 20
+
+    $barRam = New-Object RustSuite.ProgressStrip
+    $barRam.Shimmer = $true
+    $barRam.Value   = 0
+    $barRam.Bounds  = New-Object System.Drawing.Rectangle 0, $y, $w, (S 10)
+    $barRam.BackColor = [System.Drawing.Color]::Transparent
+    $script:RowHost.Controls.Add($barRam)
+    $y += S 28
+
+    $lblTemps = New-Object System.Windows.Forms.Label
+    $lblTemps.Text      = 'ДАТЧИКИ И ОБОРУДОВАНИЕ'
+    $lblTemps.Font      = [RustSuite.Theme]::FHead
+    $lblTemps.ForeColor = [RustSuite.Theme]::Muted
+    $lblTemps.BackColor = [System.Drawing.Color]::Transparent
+    $lblTemps.AutoSize  = $false
+    $lblTemps.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblTemps)
+    $y += S 22
+
+    $tempBox = New-Object System.Windows.Forms.TextBox
+    $tempBox.Multiline    = $true
+    $tempBox.ReadOnly     = $true
+    $tempBox.ScrollBars   = 'Vertical'
+    $tempBox.BorderStyle  = 'FixedSingle'
+    $tempBox.BackColor    = [RustSuite.Theme]::Field
+    $tempBox.ForeColor    = [RustSuite.Theme]::TextC
+    $tempBox.Font         = [RustSuite.Theme]::FMono
+    $tempBox.Bounds       = New-Object System.Drawing.Rectangle 0, $y, $w, (S 150)
+    $tempBox.Anchor       = 'Top,Left,Right'
+    $script:RowHost.Controls.Add($tempBox)
+    $y += S 162
+
+    $btnRefresh = New-Object RustSuite.FlatButton
+    $btnRefresh.Style  = 'Ghost'
+    $btnRefresh.Text   = 'ОБНОВИТЬ ПОКАЗАНИЯ'
+    $btnRefresh.Font   = [RustSuite.Theme]::FSmall
+    $btnRefresh.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 34)
+    $script:RowHost.Controls.Add($btnRefresh)
+    $y += S 46
+
+    # Ссылки для функций обновления (см. ниже, уровень скрипта).
+    $script:SetCpuBar   = $barCpu
+    $script:SetRamBar   = $barRam
+    $script:SetValCpu   = $valCpu
+    $script:SetValRam   = $valRam
+    $script:SetTempBox  = $tempBox
+
+    Update-SettingsMonitor
+    $tempBox.Text = Read-SettingsTemps
+
+    $tick = 0
+    try {
+        if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose() }
+    } catch {}
+    $script:TempTimer = New-Object System.Windows.Forms.Timer
+    $script:TempTimer.Interval = 1000
+    $script:TempTimer.Add_Tick({
+        try {
+            if (-not $script:SetTempBox -or $script:SetTempBox.IsDisposed) { $script:TempTimer.Stop(); return }
+            Update-SettingsMonitor
+            $script:TempTick = [int]$script:TempTick + 1
+            if ($script:TempTick -ge 5) {
+                $script:TempTick = 0
+                $script:SetTempBox.Text = Read-SettingsTemps
+            }
+        } catch {}
+    })
+    $script:TempTick = 0
+    $script:TempTimer.Start()
+
+    $btnRefresh.Add_Click({
+        try {
+            Update-SettingsMonitor
+            $script:SetTempBox.Text = Read-SettingsTemps
+        } catch {}
+    })
+
+    $script:RowHost.AutoScrollMinSize = New-Object System.Drawing.Size 0, ($y + (S 10))
+}
+
+$form.Add_FormClosing({
+    param($s, $e)
+    try { if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose() } } catch {}
+    try { if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose() } } catch {}
+})
