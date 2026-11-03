@@ -79,6 +79,8 @@ namespace RustSuite
         public static Color BorderC   = Color.FromArgb(60, 40, 90);
         public static Color Accent    = Color.FromArgb(140, 50, 200);
         public static Color AccentLt  = Color.FromArgb(180, 80, 230);
+        public static Color Secondary = Color.FromArgb(255, 70, 190);
+        public static Color Glow      = Color.FromArgb(90, 40, 160);
         public static Color TextC     = Color.FromArgb(250, 240, 255);
         public static Color Muted     = Color.FromArgb(160, 140, 175);
         public static Color Ok        = Color.FromArgb(100, 190, 110);
@@ -274,7 +276,7 @@ namespace RustSuite
             using (LinearGradientBrush b = new LinearGradientBrush(sheen, Color.Transparent, Color.Transparent, LinearGradientMode.Horizontal))
             {
                 ColorBlend cb = new ColorBlend(3);
-                cb.Colors = new Color[] { Color.FromArgb(55, Theme.Accent), Color.FromArgb(150, Theme.AccentLt), Color.FromArgb(55, Theme.Accent) };
+                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(130, Theme.Secondary), Color.FromArgb(0, Theme.Accent) };
                 cb.Positions = new float[] { 0f, 0.5f, 1f };
                 b.InterpolationColors = cb;
                 g.FillRectangle(b, sheen);
@@ -286,11 +288,14 @@ namespace RustSuite
             using (LinearGradientBrush b = new LinearGradientBrush(glow, Color.Transparent, Color.Transparent, LinearGradientMode.Horizontal))
             {
                 ColorBlend cb = new ColorBlend(3);
-                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(160, Theme.AccentLt), Color.FromArgb(0, Theme.Accent) };
+                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(160, Theme.Secondary), Color.FromArgb(0, Theme.Accent) };
                 cb.Positions = new float[] { 0f, 0.5f, 1f };
                 b.InterpolationColors = cb;
                 g.FillRectangle(b, glow);
             }
+            // Пользовательские Paint-обработчики (текст шапки) вызываются
+            // базовым OnPaint; без этого события Paint не срабатывает.
+            base.OnPaint(e);
         }
     }
 
@@ -555,9 +560,220 @@ namespace RustSuite
         }
     }
 
-    public class ProgressStrip : Control, IAnim
+    public class ThemeTile : Control, IAnim
     {
-        private double _v, _shown;
+        public string Title = "";
+        public string Sub = "";
+        public Color ColorA = Theme.Accent;
+        public Color ColorB = Theme.AccentLt;
+        public Color ColorC = Theme.Secondary;
+        private bool _sel, _hover;
+        private float _sa, _ha, _phase;
+
+        public bool Selected
+        {
+            get { return _sel; }
+            set { _sel = value; Anim.Add(this); Invalidate(); }
+        }
+
+        public ThemeTile()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Anim.Add(this); base.OnMouseLeave(e); }
+
+        public bool Tick()
+        {
+            _sa = Ease.Approach(_sa, _sel ? 1f : 0f, 0.2f);
+            _ha = Ease.Approach(_ha, _hover ? 1f : 0f, 0.22f);
+            if (_sel || _hover) { _phase += 0.022f; if (_phase > 1f) _phase -= 1f; }
+            Invalidate();
+            return !(Ease.Done(_sa, _sel ? 1f : 0f) && Ease.Done(_ha, _hover ? 1f : 0f));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            using (GraphicsPath p = Theme.Round(r, 10f))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    ColorA, ColorB, LinearGradientMode.ForwardDiagonal))
+                    g.FillPath(b, p);
+
+                using (LinearGradientBrush dark = new LinearGradientBrush(
+                    new Rectangle(0, Math.Max(0, Height - 46), Math.Max(2, Width), 46),
+                    Color.FromArgb(0, 0, 0, 0), Color.FromArgb(150, 0, 0, 0), LinearGradientMode.Vertical))
+                {
+                    GraphicsState st = g.Save();
+                    g.SetClip(p);
+                    g.FillRectangle(dark, 0, Height - 46, Width, 46);
+                    g.Restore(st);
+                }
+
+                if (_ha > 0.02f || _sel)
+                {
+                    GraphicsState st = g.Save();
+                    g.SetClip(p);
+                    float sx = (float)(_phase * (Width + 160.0)) - 80f;
+                    using (LinearGradientBrush sheen = new LinearGradientBrush(
+                        new Rectangle((int)sx, 0, 70, Math.Max(2, Height)),
+                        Color.FromArgb(0, 255, 255, 255), Color.FromArgb(0, 255, 255, 255),
+                        LinearGradientMode.Horizontal))
+                    {
+                        ColorBlend cb = new ColorBlend(3);
+                        cb.Colors = new Color[] { Color.FromArgb(0, 255, 255, 255), Color.FromArgb(45, 255, 255, 255), Color.FromArgb(0, 255, 255, 255) };
+                        cb.Positions = new float[] { 0f, 0.5f, 1f };
+                        sheen.InterpolationColors = cb;
+                        g.FillRectangle(sheen, new Rectangle((int)sx, 0, 70, Height));
+                    }
+                    g.Restore(st);
+                }
+
+                Color border = _sel ? Color.White : (_hover ? Color.FromArgb(200, 255, 255, 255) : Color.FromArgb(90, 255, 255, 255));
+                using (Pen pen = new Pen(border, _sel ? 2f : 1f)) g.DrawPath(pen, p);
+            }
+
+            TextRenderer.DrawText(g, Title, Theme.FName, new Rectangle(14, Height - 36, Width - 70, 18), Color.White,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, Sub, Theme.FSmall, new Rectangle(14, Height - 19, Width - 20, 14), Color.FromArgb(220, 240, 235, 255),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+            int cy = 14;
+            using (SolidBrush b = new SolidBrush(ColorC)) g.FillEllipse(b, Width - 30, cy, 9, 9);
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(150, 255, 255, 255))) g.FillEllipse(b, Width - 18, cy + 3, 5, 5);
+
+            if (_sel)
+            {
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(230, 255, 255, 255)))
+                    g.FillEllipse(b, Width - 34, 10, 20, 20);
+                TextRenderer.DrawText(g, "✓", Theme.FSmall, new Rectangle(Width - 34, 9, 20, 20), Color.FromArgb(35, 15, 55),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            }
+        }
+    }
+
+    public class HealthRow : Control, IAnim
+    {
+        public string Title = "";
+        public string Detail = "";
+        public string ActionText = "";
+        private string _status = "info";
+        private bool _hover;
+        private float _ha, _phase;
+
+        public string Status
+        {
+            get { return _status; }
+            set { _status = value ?? "info"; Anim.Add(this); Invalidate(); }
+        }
+
+        public event EventHandler ActionClicked;
+
+        public HealthRow()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Cursor = Cursors.Default; Anim.Add(this); base.OnMouseLeave(e); }
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            Cursor = (e.X >= Width - 150 && !string.IsNullOrEmpty(ActionText)) ? Cursors.Hand : Cursors.Default;
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left && e.X >= Width - 150 && !string.IsNullOrEmpty(ActionText))
+            {
+                EventHandler h = ActionClicked;
+                if (h != null) h(this, EventArgs.Empty);
+            }
+        }
+
+        public bool Tick()
+        {
+            _ha = Ease.Approach(_ha, _hover ? 1f : 0f, 0.22f);
+            bool pulse = (_status == "warn" || _status == "err");
+            if (pulse) { _phase += 0.045f; if (_phase > 1f) _phase -= 1f; }
+            Invalidate();
+            return pulse || !Ease.Done(_ha, _hover ? 1f : 0f);
+        }
+
+        private Color StatusColor()
+        {
+            if (_status == "ok") return Theme.Ok;
+            if (_status == "warn") return Theme.Warn;
+            if (_status == "err") return Theme.Err;
+            return Theme.AccentLt;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill = Theme.Lerp(Theme.CardBg, Theme.CardHover, _ha);
+            using (GraphicsPath p = Theme.Round(r, 9f))
+            {
+                using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                using (Pen pen = new Pen(Theme.Lerp(Theme.BorderC, Color.FromArgb(110, 255, 255, 255), _ha), 1f))
+                    g.DrawPath(pen, p);
+            }
+            Color sc = StatusColor();
+            float pulse = 0.35f + 0.25f * (float)Math.Sin(_phase * Math.PI * 2.0);
+            if (_status == "warn" || _status == "err")
+                using (SolidBrush glow = new SolidBrush(Color.FromArgb((int)(50 * pulse), sc.R, sc.G, sc.B)))
+                    g.FillEllipse(glow, 13, Height / 2 - 7, 14, 14);
+            using (SolidBrush dot = new SolidBrush(sc))
+                g.FillEllipse(dot, 17, Height / 2 - 3, 6, 6);
+            using (SolidBrush bar = new SolidBrush(Color.FromArgb(110, sc)))
+                g.FillRectangle(bar, 0, 12, 3, Height - 24);
+
+            int actionW = string.IsNullOrEmpty(ActionText) ? 0 : 132;
+            int tw = Width - 42 - actionW;
+            if (tw < 80) tw = 80;
+            TextRenderer.DrawText(g, Title, Theme.FName, new Rectangle(30, 7, tw, 19), Theme.TextC,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, Detail, Theme.FSmall, new Rectangle(30, 26, tw, Height - 29), Theme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+            if (actionW > 0 && Width > 220)
+            {
+                int bw = 118, bh = 26;
+                int bx = Width - bw - 14;
+                int by = (Height - bh) / 2;
+                using (GraphicsPath p = Theme.Round(new RectangleF(bx, by, bw, bh), 8f))
+                {
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(30, sc.R, sc.G, sc.B))) g.FillPath(b, p);
+                    using (Pen pen = new Pen(Color.FromArgb(120, sc.R, sc.G, sc.B), 1f)) g.DrawPath(pen, p);
+                }
+                TextRenderer.DrawText(g, ActionText, Theme.FSmall, new Rectangle(bx, by, bw, bh), sc,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
+        }
+    }
+
+    public class ProgressStrip : Control, IAnim
+    {        private double _v, _shown;
         private float _phase;
         public bool Shimmer = true;
 

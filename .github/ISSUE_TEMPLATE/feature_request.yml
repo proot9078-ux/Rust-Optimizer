@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an optimization, cleanup or UI improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is slow, broken or inconvenient?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the module, cleanup target or UI change.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - System optimization
+        - Network
+        - RUST cfg / binds
+        - Cleanup
+        - Repair / diagnostics
+        - Themes / UI
+        - Build / CI / docs
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and rollback
+      description: Could this break something? How should undo work? Is it opt-in?
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Project rules
+      options:
+        - label: This does not modify RUST exe/dll files or inject into the game process.
+          required: true
+        - label: Destructive actions will be opt-in and confirmed.
+          required: true

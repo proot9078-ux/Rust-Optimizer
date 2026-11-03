@@ -1,6 +1,7 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v3.0
-#  Оптимизация Windows под игру RUST + официальные cfg/бинды + мониторинг + темы
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.0
+#  Оптимизация Windows под RUST + официальные cfg/бинды +
+#  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
 param([switch]$SelfTest, [switch]$TestUi)
@@ -8,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi)
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '3.1'
+$script:AppVersion   = '4.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -34,10 +35,14 @@ $script:BindCmdBox   = $null
 $script:StatsTimer   = $null
 $script:CpuBar       = $null
 $script:RamBar       = $null
+$script:DiskBar      = $null
 $script:CpuVal       = $null
 $script:RamVal       = $null
+$script:DiskVal      = $null
 $script:RustState    = $null
 $script:Header       = $null
+$script:AutoClose    = $true
+$script:CloseTimer   = $null
 
 New-Item -ItemType Directory -Force -Path $script:Root, $script:RegBackup, $script:RustBackup | Out-Null
 
@@ -55,6 +60,11 @@ if (Test-Path -LiteralPath $script:StateFile) {
     try { $script:State = Import-Clixml -LiteralPath $script:StateFile } catch { $script:State = @{} }
 }
 if (-not ($script:State -is [hashtable])) { $script:State = @{} }
+
+# Закрывать ли оптимизатор автоматически после успешного запуска RUST.
+if ($null -ne $script:State['AutoClose']) {
+    $script:AutoClose = [bool]$script:State['AutoClose']
+}
 
 function Save-State {
     if ($script:SuppressSave) { return }
@@ -1341,6 +1351,980 @@ function Invoke-ShaderClean {
 }
 
 # ============================================================
+#  WINDOWS CARE ENGINE — очистка
+#  Стандартные средства Windows, без сторонних бинарников.
+# ============================================================
+
+$script:CleanBytes   = [int64]0
+$script:CleanObjects = [int]0
+$script:CleanNotes   = New-Object System.Collections.Generic.List[string]
+
+function Reset-CleanMeter {
+    $script:CleanBytes   = [int64]0
+    $script:CleanObjects = [int]0
+    $script:CleanNotes.Clear()
+}
+
+function Add-CleanMeter {
+    param([int64]$Bytes = 0, [int]$Objects = 0, [string]$Note = '')
+    if ($Bytes -gt 0) { $script:CleanBytes += $Bytes }
+    if ($Objects -gt 0) { $script:CleanObjects += $Objects }
+    if ($Note) { $script:CleanNotes.Add($Note) }
+}
+
+function Get-CleanMeterText {
+    return ('{0:N1} МБ · {1:N0} объектов' -f ($script:CleanBytes / 1MB), $script:CleanObjects)
+}
+
+function Write-CleanSummary {
+    param([string]$Title = 'Очистка')
+    $mb = [math]::Round($script:CleanBytes / 1MB, 1)
+    Write-Log ('{0}: освобождено {1:N1} МБ, удалено объектов — {2:N0}' -f $Title, $mb, $script:CleanObjects) 'ok'
+    $script:State['LastCleanMB']    = $mb
+    $script:State['LastCleanCount'] = $script:CleanObjects
+    $script:State['LastCleanTitle'] = $Title
+    $script:State['LastCleanAt']    = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    Save-State
+}
+
+# ------------------------------------------------------------
+#  Безопасные файловые операции
+# ------------------------------------------------------------
+function Get-PathBytes {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return [int64]0 }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer) { return [int64]$item.Length }
+        $sum = (Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
+                Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
+                Measure-Object -Property Length -Sum).Sum
+        if ($null -eq $sum) { return [int64]0 }
+        return [int64]$sum
+    } catch { return [int64]0 }
+}
+
+function Clear-FolderSafe {
+    param([string]$Path, [string]$Filter = '*')
+    $res = [pscustomobject]@{ Path = $Path; Bytes = [int64]0; Objects = 0; Skipped = 0 }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $res }
+    $items = @(Get-ChildItem -LiteralPath $Path -Force -Filter $Filter -ErrorAction SilentlyContinue)
+    foreach ($it in $items) {
+        if ($it.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            $res.Skipped++
+            continue
+        }
+        $size = if ($it.PSIsContainer) { Get-PathBytes $it.FullName } else { [int64]$it.Length }
+        try {
+            Remove-Item -LiteralPath $it.FullName -Recurse -Force -ErrorAction Stop
+            $res.Bytes += $size
+            $res.Objects++
+            Add-CleanMeter -Bytes $size -Objects 1
+        } catch {
+            $res.Skipped++
+        }
+    }
+    return $res
+}
+
+function Clear-FilesByPattern {
+    param([string]$Path, [string]$Pattern)
+    $res = [pscustomobject]@{ Path = $Path; Bytes = [int64]0; Objects = 0; Skipped = 0 }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $res }
+    foreach ($f in @(Get-ChildItem -LiteralPath $Path -Filter $Pattern -File -Force -ErrorAction SilentlyContinue)) {
+        if ($f.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { $res.Skipped++; continue }
+        try {
+            $size = [int64]$f.Length
+            Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+            $res.Bytes += $size
+            $res.Objects++
+            Add-CleanMeter -Bytes $size -Objects 1
+        } catch { $res.Skipped++ }
+    }
+    return $res
+}
+
+function Remove-FileSafe {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        $size = [int64](Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue).Length
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        Add-CleanMeter -Bytes $size -Objects 1
+    } catch {}
+}
+
+# ------------------------------------------------------------
+#  Ядро очистки (не сбрасывает счётчик — используется DeepClean)
+# ------------------------------------------------------------
+function Clear-UpdateCacheCore {
+    $services = @('wuauserv', 'bits', 'dosvc', 'usosvc')
+    $saved = @{}
+    foreach ($n in $services) {
+        $svc = Get-Service -Name $n -ErrorAction SilentlyContinue
+        if ($svc) {
+            $saved[$n] = @{
+                Status = [string]$svc.Status
+                Start  = [string]$svc.StartType
+            }
+        }
+    }
+    foreach ($n in $services) {
+        try { Stop-Service -Name $n -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    try {
+        $sd = Join-Path $env:SystemRoot 'SoftwareDistribution'
+        Clear-FolderSafe (Join-Path $sd 'Download') | Out-Null
+        Clear-FolderSafe (Join-Path $sd 'DeliveryOptimization') | Out-Null
+        Clear-FolderSafe (Join-Path $sd 'PostRebootEventCache.V2') | Out-Null
+        Clear-FolderSafe (Join-Path $env:SystemRoot 'Logs\WindowsUpdate') | Out-Null
+        $doCache = Join-Path $env:SystemRoot 'ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache'
+        Clear-FolderSafe $doCache | Out-Null
+        if (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue) {
+            try { Delete-DeliveryOptimizationCache -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    } finally {
+        foreach ($n in @($saved.Keys)) {
+            try { Set-Service -Name $n -StartupType ([string]$saved[$n].Start) -ErrorAction SilentlyContinue } catch {}
+            if ($saved[$n].Status -eq 'Running') {
+                try { Start-Service -Name $n -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+    }
+    Write-Log 'Кэш обновлений Windows и Delivery Optimization очищен' 'info'
+}
+
+function Clear-DumpCore {
+    Clear-FolderSafe (Join-Path $env:LOCALAPPDATA 'CrashDumps') | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Minidump') | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'LiveKernelReports') | Out-Null
+    Clear-FolderSafe (Join-Path $env:ProgramData 'Microsoft\Windows\WER\ReportQueue') | Out-Null
+    Clear-FolderSafe (Join-Path $env:ProgramData 'Microsoft\Windows\WER\ReportArchive') | Out-Null
+    Clear-FolderSafe (Join-Path $env:ProgramData 'Microsoft\Windows\WER\Temp') | Out-Null
+    Clear-FolderSafe (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER') | Out-Null
+    Remove-FileSafe (Join-Path $env:SystemRoot 'MEMORY.DMP')
+}
+
+function Clear-BrowserCacheCore {
+    $chromium = @(
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'BraveSoftware\Brave-Browser\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'Vivaldi\User Data'),
+        (Join-Path $env:LOCALAPPDATA 'Yandex\YandexBrowser\User Data')
+    )
+    $cacheSubs = @(
+        'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'GrShaderCache',
+        'ShaderCache', 'Media Cache', 'Service Worker\CacheStorage',
+        'Service Worker\ScriptCache'
+    )
+    foreach ($root in $chromium) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $profiles = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' -or $_.Name -eq 'Guest Profile' -or $_.Name -eq 'System Profile' })
+        foreach ($p in $profiles) {
+            foreach ($sub in $cacheSubs) {
+                Clear-FolderSafe (Join-Path $p.FullName $sub) | Out-Null
+            }
+        }
+        foreach ($sub in @('ShaderCache', 'GrShaderCache', 'GraphiteDawnCache')) {
+            Clear-FolderSafe (Join-Path $root $sub) | Out-Null
+        }
+    }
+
+    $ff = Join-Path $env:LOCALAPPDATA 'Mozilla\Firefox\Profiles'
+    if (Test-Path -LiteralPath $ff) {
+        foreach ($p in @(Get-ChildItem -LiteralPath $ff -Directory -Force -ErrorAction SilentlyContinue)) {
+            foreach ($sub in @('cache2', 'startupCache', 'shader-cache')) {
+                Clear-FolderSafe (Join-Path $p.FullName $sub) | Out-Null
+            }
+        }
+    }
+
+    $opera = Join-Path $env:LOCALAPPDATA 'Opera Software\Opera Stable'
+    if (Test-Path -LiteralPath $opera) {
+        foreach ($sub in @('Cache', 'Code Cache', 'GPUCache', 'Service Worker\CacheStorage')) {
+            Clear-FolderSafe (Join-Path $opera $sub) | Out-Null
+        }
+    }
+    Write-Log 'Кэш браузеров очищен (только Cache, без паролей и истории)' 'info'
+}
+
+function Clear-GameJunkCore {
+    if ($script:SteamPath) {
+        foreach ($sub in @('logs', 'dumps', 'appcache\httpcache', 'appcache\librarycache')) {
+            Clear-FolderSafe (Join-Path $script:SteamPath $sub) | Out-Null
+        }
+        $rust = Join-Path $script:SteamPath 'steamapps\common\Rust'
+        foreach ($sub in @('logs', 'crash dumps')) {
+            Clear-FolderSafe (Join-Path $rust $sub) | Out-Null
+        }
+        Clear-FilesByPattern $rust '*.dmp' | Out-Null
+    }
+    $rustLocal = Join-Path $env:LOCALAPPDATA 'Facepunch\Rust'
+    if (Test-Path -LiteralPath $rustLocal) {
+        foreach ($sub in @('logs', 'crashes')) {
+            Clear-FolderSafe (Join-Path $rustLocal $sub) | Out-Null
+        }
+        Clear-FilesByPattern $rustLocal '*.dmp' | Out-Null
+    }
+    Write-Log 'Логи и дампы Steam / RUST очищены (cfg и настройки не тронуты)' 'info'
+}
+
+function Clear-ThumbnailCore {
+    $explorer = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer'
+    Clear-FilesByPattern $explorer 'thumbcache_*.db' | Out-Null
+    Clear-FilesByPattern $explorer 'iconcache_*.db' | Out-Null
+    Clear-FolderSafe (Join-Path $explorer 'ThumbCacheToDelete') | Out-Null
+    Clear-FolderSafe (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Caches') | Out-Null
+    Write-Log 'Кэш эскизов и иконок очищен (занятые Explorer файлы пропущены)' 'info'
+}
+
+function Clear-DeepLogsCore {
+    Clear-FilesByPattern (Join-Path $env:SystemRoot 'Logs\CBS') '*.log' | Out-Null
+    Clear-FilesByPattern (Join-Path $env:SystemRoot 'Logs\CBS') '*.cab' | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Logs\DISM') | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Logs\MoSetup') | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Logs\SIH') | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Temp') | Out-Null
+    Clear-FolderSafe (Join-Path $env:ProgramData 'Microsoft\Windows\WER\Temp') | Out-Null
+    Write-Log 'Старые журналы CBS/DISM/Windows Update очищены' 'info'
+}
+
+function Clear-PrefetchCore {
+    Clear-FilesByPattern (Join-Path $env:SystemRoot 'Prefetch') '*.pf' | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Prefetch\ReadyBoot') | Out-Null
+    Write-Log 'Prefetch очищен — первые запуски могут быть чуть медленнее' 'warn'
+}
+
+function Clear-OldWindowsCore {
+    foreach ($name in @('Windows.old', '$Windows.~BT', '$Windows.~WS', '$WinREAgent')) {
+        $path = Join-Path $env:SystemDrive $name
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $size = Get-PathBytes $path
+        Write-Log ('Удаление ' + $name + ' (' + [math]::Round($size / 1MB, 1) + ' МБ)…') 'warn'
+        try {
+            & takeown.exe /F $path /R /A /D Y 2>&1 | Out-Null
+            & icacls.exe $path /grant '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>&1 | Out-Null
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+            Add-CleanMeter -Bytes $size -Objects 1
+        } catch {
+            Write-Log ('Не удалось удалить ' + $name + ': ' + $_.Exception.Message) 'warn'
+        }
+    }
+}
+
+function Clear-EventLogsCore {
+    $logs = @(Get-WinEvent -ListLog * -ErrorAction SilentlyContinue |
+              Where-Object { $_.IsEnabled -and $_.RecordCount -gt 0 })
+    $cleared = 0
+    foreach ($l in $logs) {
+        try {
+            & wevtutil.exe cl $l.LogName 2>&1 | Out-Null
+            $cleared++
+            Add-CleanMeter -Objects 1
+        } catch {}
+    }
+    Write-Log ('Журналы событий очищены: ' + $cleared + ' из ' + $logs.Count) 'warn'
+}
+
+# ------------------------------------------------------------
+#  Публичные модули очистки
+# ------------------------------------------------------------
+function Invoke-DeepClean {
+    Reset-CleanMeter
+    Write-Log 'Глубокая очистка Windows: старт' 'step'
+    Clear-FolderSafe $env:TEMP | Out-Null
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'Temp') | Out-Null
+    Clear-FolderSafe (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\INetCache') | Out-Null
+    Clear-UpdateCacheCore
+    Clear-DumpCore
+    Clear-BrowserCacheCore
+    Clear-GameJunkCore
+    Clear-ThumbnailCore
+    Clear-DeepLogsCore
+    Write-CleanSummary 'Глубокая очистка Windows'
+}
+
+function Invoke-UpdateCacheClean {
+    Reset-CleanMeter
+    Clear-UpdateCacheCore
+    Write-CleanSummary 'Кэш обновлений Windows'
+}
+
+function Invoke-DumpClean {
+    Reset-CleanMeter
+    Clear-DumpCore
+    Write-CleanSummary 'Дампы и отчёты об ошибках'
+}
+
+function Invoke-BrowserCache {
+    Reset-CleanMeter
+    Clear-BrowserCacheCore
+    Write-CleanSummary 'Кэш браузеров'
+}
+
+function Invoke-GameJunkClean {
+    Reset-CleanMeter
+    Clear-GameJunkCore
+    Write-CleanSummary 'Логи и дампы Steam / RUST'
+}
+
+function Invoke-ThumbnailClean {
+    Reset-CleanMeter
+    Clear-ThumbnailCore
+    Write-CleanSummary 'Кэш эскизов и иконок'
+}
+
+function Invoke-PrefetchClean {
+    Reset-CleanMeter
+    Clear-PrefetchCore
+    Write-CleanSummary 'Prefetch'
+}
+
+function Invoke-OldWindowsClean {
+    Reset-CleanMeter
+    Clear-OldWindowsCore
+    Write-CleanSummary 'Старые установки Windows'
+}
+
+function Invoke-EventLogClean {
+    Reset-CleanMeter
+    Clear-EventLogsCore
+    Write-CleanSummary 'Журналы событий Windows'
+}
+
+# ============================================================
+#  WINDOWS CARE ENGINE — восстановление и внешние инструменты
+# ============================================================
+
+function Invoke-ExternalTool {
+    param(
+        [string]$File,
+        [string]$Arguments,
+        [string]$Label = 'Операция',
+        [int]$TimeoutMinutes = 60,
+        [switch]$Quiet
+    )
+    if (-not $File) { throw 'Не указан исполняемый файл' }
+    if (-not (Test-Path -LiteralPath $File)) { throw ('Не найден файл: ' + $File) }
+    $tmpBase = Join-Path $script:Root ('tool-' + [Guid]::NewGuid().ToString('N'))
+    $stdout = $tmpBase + '.out.log'
+    $stderr = $tmpBase + '.err.log'
+    $result = [pscustomobject]@{
+        Label = $Label; ExitCode = -1; Elapsed = 0; Output = ''; Error = ''
+    }
+    $started = Get-Date
+    try {
+        $p = Start-Process -FilePath $File -ArgumentList $Arguments -WindowStyle Hidden `
+             -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -ErrorAction Stop
+        while (-not $p.HasExited) {
+            Start-Sleep -Milliseconds 300
+            Pump
+            $elapsed = ((Get-Date) - $started).TotalSeconds
+            if (-not $Quiet) {
+                Set-Status ('{0} · {1:N0} c' -f $Label, $elapsed) '#FF8A4C'
+            }
+            if ($TimeoutMinutes -gt 0 -and $elapsed -gt ($TimeoutMinutes * 60)) {
+                try { $p.Kill() } catch {}
+                Write-Log ($Label + ': превышено время ожидания, процесс остановлен') 'err'
+                break
+            }
+        }
+        try { $p.WaitForExit() } catch {}
+        $result.ExitCode = [int]$p.ExitCode
+    } catch {
+        $result.Error = $_.Exception.Message
+        Write-Log ($Label + ': ' + $result.Error) 'err'
+    } finally {
+        $result.Elapsed = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+        if (Test-Path -LiteralPath $stdout) {
+            try { $result.Output = [IO.File]::ReadAllText($stdout) } catch {}
+            Remove-Item -LiteralPath $stdout -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $stderr) {
+            try { $result.Error = ($result.Error + ' ' + [IO.File]::ReadAllText($stderr)).Trim() } catch {}
+            Remove-Item -LiteralPath $stderr -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $Quiet) {
+        $tail = @(($result.Output -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 8)
+        foreach ($line in $tail) { Write-Log ('   ' + $line.Trim()) 'info' }
+        if ($result.ExitCode -eq 0) {
+            Write-Log ('{0}: готово за {1:N0} c' -f $Label, $result.Elapsed) 'ok'
+        } else {
+            Write-Log ('{0}: код {1} за {2:N0} c' -f $Label, $result.ExitCode, $result.Elapsed) 'warn'
+        }
+    }
+    return $result
+}
+
+function Invoke-SfcScan {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'SFC /scannow: проверка системных файлов (может занять 5–20 минут)' 'step'
+    Set-Status 'SFC /scannow · проверка системных файлов…' '#FF8A4C'
+    $r = Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\sfc.exe') `
+         -Arguments '/scannow' -Label 'SFC /scannow' -TimeoutMinutes 60
+    if ($r.ExitCode -eq 0) {
+        Write-Log 'SFC завершён. Если найдены исправленные файлы — перезагрузите ПК.' 'ok'
+    } else {
+        Write-Log ('SFC завершён с кодом ' + $r.ExitCode + '. Подробности — в журнале CBS.') 'warn'
+    }
+    return $r
+}
+
+function Invoke-DismRestore {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'DISM RestoreHealth: восстановление образа Windows (может занять 10–30 минут)' 'step'
+    Set-Status 'DISM /RestoreHealth · восстановление образа…' '#FF8A4C'
+    $r = Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\dism.exe') `
+         -Arguments '/Online /Cleanup-Image /RestoreHealth' -Label 'DISM RestoreHealth' -TimeoutMinutes 90
+    if ($r.ExitCode -eq 0) {
+        Write-Log 'DISM: образ Windows восстановлен. Рекомендуется перезагрузка.' 'ok'
+    } else {
+        Write-Log ('DISM завершён с кодом ' + $r.ExitCode + '. Проверьте интернет и журнал DISM.') 'warn'
+    }
+    return $r
+}
+
+function Invoke-DismComponentCleanup {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'DISM StartComponentCleanup: очистка хранилища компонентов WinSxS' 'step'
+    Set-Status 'DISM /StartComponentCleanup · очистка WinSxS…' '#FF8A4C'
+    $r = Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\dism.exe') `
+         -Arguments '/Online /Cleanup-Image /StartComponentCleanup' -Label 'DISM ComponentCleanup' -TimeoutMinutes 120
+    if ($r.ExitCode -eq 0) { Write-Log 'WinSxS очищен без удаления актуальных компонентов.' 'ok' }
+    return $r
+}
+
+# Имя для карточки очистки: тот же безопасный StartComponentCleanup.
+function Invoke-WinSxSClean {
+    Reset-CleanMeter
+    $r = Invoke-DismComponentCleanup
+    if ($r -and $r.ExitCode -eq 0) {
+        Write-CleanSummary 'Очистка WinSxS'
+    } else {
+        Write-Log 'WinSxS: очистка завершилась не полностью, счётчик места не обновлён' 'warn'
+    }
+}
+
+function Invoke-DismAnalyze {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'DISM AnalyzeComponentStore: анализ хранилища компонентов' 'step'
+    $r = Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\dism.exe') `
+         -Arguments '/Online /Cleanup-Image /AnalyzeComponentStore' -Label 'DISM Analyze' -TimeoutMinutes 60
+    return $r
+}
+
+function Invoke-ChkdskScan {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'CHKDSK /scan: онлайн-проверка системного диска (без перезагрузки)' 'step'
+    Set-Status 'CHKDSK /scan · проверка диска…' '#FF8A4C'
+    $r = Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\chkdsk.exe') `
+         -Arguments ((($env:SystemDrive) + ' /scan')) -Label 'CHKDSK /scan' -TimeoutMinutes 90
+    return $r
+}
+
+function Invoke-WindowsUpdateReset {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'Сброс компонентов Windows Update: остановка служб и пересоздание кэша' 'step'
+    $names = @('wuauserv', 'bits', 'cryptsvc', 'msiserver', 'appidsvc')
+    $saved = @{}
+    foreach ($n in $names) {
+        $svc = Get-Service -Name $n -ErrorAction SilentlyContinue
+        if ($svc) { $saved[$n] = @{ Status = [string]$svc.Status; Start = [string]$svc.StartType } }
+    }
+    foreach ($n in $names) {
+        try { Stop-Service -Name $n -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    foreach ($dirName in @('SoftwareDistribution', 'Catroot2')) {
+        $path = Join-Path $env:SystemRoot $dirName
+        if (Test-Path -LiteralPath $path) {
+            try {
+                Rename-Item -LiteralPath $path -NewName ($dirName + '.old-' + $stamp) -Force -ErrorAction Stop
+                Write-Log ('Переименовано: ' + $dirName + ' → ' + $dirName + '.old-' + $stamp) 'info'
+            } catch {
+                Write-Log ('Не удалось переименовать ' + $dirName + ': ' + $_.Exception.Message) 'warn'
+            }
+        }
+    }
+
+    $dlls = @(
+        'qmgr.dll', 'wuaueng.dll', 'wuapi.dll', 'wups.dll', 'wups2.dll',
+        'softpub.dll', 'wintrust.dll', 'initpki.dll', 'oleaut32.dll',
+        'ole32.dll', 'urlmon.dll', 'mshtml.dll', 'shdocvw.dll', 'browseui.dll'
+    )
+    foreach ($d in $dlls) {
+        $p = Join-Path $env:SystemRoot 'System32\' + $d
+        if (Test-Path -LiteralPath $p) {
+            try { & regsvr32.exe /s $p 2>&1 | Out-Null } catch {}
+        }
+    }
+
+    foreach ($n in @($saved.Keys)) {
+        try { Set-Service -Name $n -StartupType ([string]$saved[$n].Start) -ErrorAction SilentlyContinue } catch {}
+        if ($saved[$n].Status -eq 'Running') {
+            try { Start-Service -Name $n -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    Write-Log 'Windows Update сброшен. Перезагрузите ПК и проверьте обновления.' 'warn'
+}
+
+function Invoke-WindowsUpdateServicesFix {
+    $map = @{
+        wuauserv  = 'Manual'
+        bits      = 'Manual'
+        cryptsvc  = 'Automatic'
+        msiserver = 'Manual'
+        dosvc     = 'Manual'
+    }
+    foreach ($n in @($map.Keys)) {
+        $svc = Get-Service -Name $n -ErrorAction SilentlyContinue
+        if (-not $svc) { continue }
+        try { Set-Service -Name $n -StartupType $map[$n] -ErrorAction SilentlyContinue } catch {}
+        if ($n -eq 'cryptsvc' -and $svc.Status -ne 'Running') {
+            try { Start-Service -Name $n -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    Write-Log 'Службы Windows Update переведены в рабочий режим' 'ok'
+}
+
+function Invoke-NetworkReset {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'Сброс сети: Winsock, TCP/IP и DNS-кэш. После сброса нужна перезагрузка.' 'warn'
+    $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    Invoke-ExternalTool -File $netsh -Arguments 'winsock reset' -Label 'netsh winsock reset' -TimeoutMinutes 5 | Out-Null
+    Invoke-ExternalTool -File $netsh -Arguments 'int ip reset' -Label 'netsh int ip reset' -TimeoutMinutes 5 | Out-Null
+    try { & ipconfig.exe /flushdns 2>&1 | Out-Null } catch {}
+    Write-Log 'Сеть сброшена. Перезагрузите ПК.' 'warn'
+}
+
+function Invoke-WmiRepair {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    $wmi = Join-Path $env:SystemRoot 'System32\wbem\winmgmt.exe'
+    Write-Log 'Проверка репозитория WMI…' 'step'
+    & $wmi /verifyrepository 2>&1 | Out-Null
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        Write-Log 'Репозиторий WMI не согласован — запускаю salvage' 'warn'
+        & $wmi /salvagerepository 2>&1 | Out-Null
+        $code = $LASTEXITCODE
+    }
+    try { Stop-Service -Name 'Winmgmt' -Force -ErrorAction SilentlyContinue } catch {}
+    try { Start-Service -Name 'Winmgmt' -ErrorAction SilentlyContinue } catch {}
+    if ($code -eq 0) { Write-Log 'WMI: репозиторий согласован.' 'ok' }
+    else { Write-Log ('WMI: код ' + $code + '. Если проблемы остались — потребуется перезагрузка.') 'warn' }
+}
+
+function Invoke-StoreReset {
+    Write-Log 'Сброс кэша Microsoft Store…' 'step'
+    $ok = $false
+    try {
+        $p = Start-Process -FilePath 'wsreset.exe' -ArgumentList '-i' -WindowStyle Hidden -PassThru -Wait -ErrorAction Stop
+        $ok = ($p.ExitCode -eq 0)
+    } catch {}
+    if (-not $ok) {
+        try { Start-Process -FilePath 'wsreset.exe' -WindowStyle Hidden -Wait | Out-Null; $ok = $true } catch {}
+    }
+    if ($ok) { Write-Log 'Кэш Microsoft Store очищен' 'ok' }
+    else { Write-Log 'Не удалось запустить wsreset.exe' 'warn' }
+}
+
+function Invoke-IconCacheRebuild {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'Пересборка кэша иконок: Explorer будет перезапущен' 'warn'
+    try { Stop-Process -Name 'explorer' -Force -ErrorAction SilentlyContinue } catch {}
+    Start-Sleep -Milliseconds 1200
+    Reset-CleanMeter
+    Clear-ThumbnailCore
+    try { Start-Process -FilePath 'explorer.exe' | Out-Null } catch {}
+    Write-CleanSummary 'Кэш иконок и эскизов'
+    Write-Log 'Explorer перезапущен, кэш иконок пересобран' 'ok'
+}
+
+function Invoke-TimeResync {
+    Write-Log 'Синхронизация системного времени…' 'step'
+    try { Set-Service -Name 'W32Time' -StartupType Automatic -ErrorAction SilentlyContinue } catch {}
+    try { Start-Service -Name 'W32Time' -ErrorAction SilentlyContinue } catch {}
+    & w32tm.exe /resync /force 2>&1 | Out-Null
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        & w32tm.exe /config '/manualpeerlist:time.windows.com,0x9' /syncfromflags:manual /update 2>&1 | Out-Null
+        try { Restart-Service -Name 'W32Time' -Force -ErrorAction SilentlyContinue } catch {}
+        & w32tm.exe /resync /force 2>&1 | Out-Null
+        $code = $LASTEXITCODE
+    }
+    if ($code -eq 0) { Write-Log 'Время синхронизировано с time.windows.com' 'ok' }
+    else { Write-Log 'Синхронизация времени не удалась — проверьте доступ к интернету' 'warn' }
+}
+
+function Invoke-DriverRescan {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'Поиск изменений оборудования (pnputil /scan-devices)…' 'step'
+    Invoke-ExternalTool -File (Join-Path $env:SystemRoot 'System32\pnputil.exe') `
+        -Arguments '/scan-devices' -Label 'pnputil scan-devices' -TimeoutMinutes 10 | Out-Null
+    $bad = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+             Where-Object { $_.ConfigManagerErrorCode -ne 0 })
+    if ($bad.Count -eq 0) { Write-Log 'Проблемных устройств не найдено' 'ok' }
+    else { Write-Log ('Устройств с ошибками: ' + $bad.Count + ' — проверьте Диспетчер устройств') 'warn' }
+}
+
+function Invoke-SpoolerReset {
+    if (-not $script:IsAdmin) { throw 'Нужны права администратора' }
+    Write-Log 'Сброс очереди печати…' 'step'
+    try { Stop-Service -Name 'Spooler' -Force -ErrorAction Stop } catch {
+        Write-Log ('Не удалось остановить Spooler: ' + $_.Exception.Message) 'warn'
+        return
+    }
+    Clear-FolderSafe (Join-Path $env:SystemRoot 'System32\spool\PRINTERS') | Out-Null
+    try { Start-Service -Name 'Spooler' -ErrorAction Stop } catch {}
+    Write-Log 'Очередь печати очищена, служба Spooler запущена' 'ok'
+}
+
+function Invoke-RestorePointNow {
+    Write-Log 'Создание точки восстановления…' 'step'
+    New-RestorePoint
+}
+
+# ------------------------------------------------------------
+#  Дополнительные оптимизации
+# ------------------------------------------------------------
+function Invoke-FullscreenOpt {
+    $p = 'HKCU:\System\GameConfigStore'
+    $names = @(
+        'GameDVR_FSEBehaviorMode',
+        'GameDVR_HonorUserFSEBehaviorMode',
+        'GameDVR_DXGIHonorFSEWindowsCompatible',
+        'GameDVR_EFSEFeatureFlags'
+    )
+    if (-not $script:State.ContainsKey('FseOld')) {
+        $snap = @{}
+        foreach ($n in $names) {
+            $v = Get-Reg $p $n
+            $snap[$n] = if ($null -eq $v) { [int64]-1 } else { [int64]$v }
+        }
+        $script:State['FseOld'] = $snap
+    }
+    Set-RegDword $p 'GameDVR_FSEBehaviorMode' 2
+    Set-RegDword $p 'GameDVR_HonorUserFSEBehaviorMode' 1
+    Set-RegDword $p 'GameDVR_DXGIHonorFSEWindowsCompatible' 1
+    Set-RegDword $p 'GameDVR_EFSEFeatureFlags' 0
+    Write-Log 'Глобальные оптимизации полного экрана отключены (FSE)' 'ok'
+}
+
+function Undo-FullscreenOpt {
+    $p = 'HKCU:\System\GameConfigStore'
+    $snap = $script:State['FseOld']
+    if ($snap) {
+        foreach ($n in @($snap.Keys)) {
+            $v = [int64]$snap[$n]
+            if ($v -lt 0) { Remove-RegValue $p $n } else { Set-RegDword $p $n $v }
+        }
+    }
+    Write-Log 'Настройки полного экрана восстановлены' 'ok'
+}
+
+function Invoke-XboxServices {
+    foreach ($n in @('XblAuthManager', 'XblGameSave', 'XboxNetApiSvc', 'XboxGipSvc')) {
+        $null = Set-ServiceState $n 'Disabled' -StopIt
+    }
+    Write-Log 'Службы Xbox отключены (Game Pass и Xbox-приложения могут не работать)' 'warn'
+}
+
+function Undo-XboxServices {
+    foreach ($n in @('XblAuthManager', 'XblGameSave', 'XboxNetApiSvc', 'XboxGipSvc')) {
+        $st = [string]$script:State["svc_$n"]
+        if (-not $st) { $st = 'Manual' }
+        try { Set-Service -Name $n -StartupType $st -ErrorAction SilentlyContinue } catch {}
+    }
+    Write-Log 'Службы Xbox возвращены в исходное состояние' 'ok'
+}
+
+function Invoke-FastStartupOff {
+    $p = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+    $old = Get-Reg $p 'HiberbootEnabled'
+    if (-not $script:State.ContainsKey('FastStartupOld')) {
+        $script:State['FastStartupOld'] = if ($null -eq $old) { -1 } else { [int64]$old }
+    }
+    Set-RegDword $p 'HiberbootEnabled' 0
+    Write-Log 'Быстрый запуск Windows отключён — полное завершение работы и чистая загрузка' 'ok'
+}
+
+function Undo-FastStartupOff {
+    $p = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+    $old = $script:State['FastStartupOld']
+    if ($null -eq $old -or [int64]$old -lt 0) { Remove-RegValue $p 'HiberbootEnabled' }
+    else { Set-RegDword $p 'HiberbootEnabled' ([int64]$old) }
+    Write-Log 'Быстрый запуск Windows восстановлен' 'ok'
+}
+
+# ============================================================
+#  ДИАГНОСТИКА WINDOWS
+#  Быстрые проверки типовых проблем без тяжёлых WMI-запросов.
+# ============================================================
+
+function New-HealthCheck {
+    param(
+        [string]$Id,
+        [string]$Title,
+        [string]$Status = 'info',
+        [string]$Detail = '',
+        [string]$Fix = '',
+        [string]$FixLabel = ''
+    )
+    return [pscustomobject]@{
+        Id = $Id; Title = $Title; Status = $Status; Detail = $Detail
+        Fix = $Fix; FixLabel = $FixLabel
+    }
+}
+
+function Test-PendingReboot {
+    $pending = $false
+    foreach ($k in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+    )) {
+        if (Test-Path -LiteralPath $k) { $pending = $true; break }
+    }
+    if (-not $pending) {
+        $pfro = Get-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' 'PendingFileRenameOperations'
+        if ($pfro -and @($pfro).Count -gt 0) { $pending = $true }
+    }
+    return $pending
+}
+
+function Get-SystemHealthReport {
+    param([switch]$Quick)
+    $out = New-Object System.Collections.Generic.List[object]
+
+    $out.Add((New-HealthCheck 'admin' 'Права администратора' `
+        $(if ($script:IsAdmin) { 'ok' } else { 'warn' }) `
+        $(if ($script:IsAdmin) { 'Полный доступ к обслуживанию Windows' } else { 'Часть проверок и исправлений недоступна — перезапустите от имени администратора' })))
+
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop | Select-Object -First 1
+        $up = (Get-Date) - $os.LastBootUpTime
+        $uptimeText = '{0} дн. {1} ч' -f [int]$up.TotalDays, $up.Hours
+        $out.Add((New-HealthCheck 'uptime' 'Время работы системы' 'info' ('Последняя загрузка: ' + $uptimeText)))
+        $out.Add((New-HealthCheck 'reboot' 'Ожидание перезагрузки' `
+            $(if (Test-PendingReboot) { 'warn' } else { 'ok' }) `
+            $(if (Test-PendingReboot) { 'Есть незавершённые изменения — перезагрузите ПК' } else { 'Незавершённых обновлений нет' }) `
+            'reboot' 'ПЕРЕЗАГРУЗИТЬ'))
+    } catch {
+        $out.Add((New-HealthCheck 'uptime' 'Время работы системы' 'info' 'Не удалось получить сведения'))
+    }
+
+    try {
+        $sys = $env:SystemDrive
+        $d = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='" + $sys + "'") -ErrorAction Stop
+        $freeGb = [math]::Round($d.FreeSpace / 1GB, 1)
+        $totalGb = [math]::Round($d.Size / 1GB, 1)
+        $pct = if ($d.Size -gt 0) { [math]::Round($d.FreeSpace / $d.Size * 100, 1) } else { 0 }
+        $st = if ($pct -lt 5) { 'err' } elseif ($pct -lt 10) { 'warn' } else { 'ok' }
+        $out.Add((New-HealthCheck 'disk' 'Свободное место на системном диске' $st `
+            ('{0} ГБ свободно из {1} ГБ ({2} %)' -f $freeGb, $totalGb, $pct) 'cleanup' 'К ОЧИСТКЕ'))
+    } catch {
+        $out.Add((New-HealthCheck 'disk' 'Свободное место' 'info' 'Не удалось прочитать размер диска'))
+    }
+
+    if (-not $Quick) {
+        try {
+            $disks = @(Get-PhysicalDisk -ErrorAction Stop)
+            if ($disks.Count -gt 0) {
+                $bad = @($disks | Where-Object { $_.HealthStatus -ne 'Healthy' })
+                $names = ($disks | ForEach-Object { [string]$_.FriendlyName } | Select-Object -First 3) -join ', '
+                $st = if ($bad.Count -gt 0) { 'err' } else { 'ok' }
+                $detail = if ($bad.Count -gt 0) {
+                    'Проблемы: ' + (($bad | ForEach-Object { [string]$_.FriendlyName + ' (' + [string]$_.HealthStatus + ')' }) -join ', ')
+                } else { 'SMART/Health: ' + $names }
+                $out.Add((New-HealthCheck 'disksmart' 'Здоровье накопителей' $st $detail))
+            }
+        } catch {}
+
+        try {
+            $wmi = Join-Path $env:SystemRoot 'System32\wbem\winmgmt.exe'
+            if (Test-Path -LiteralPath $wmi) {
+                & $wmi /verifyrepository 2>&1 | Out-Null
+                $code = $LASTEXITCODE
+                if ($code -eq 0) {
+                    $out.Add((New-HealthCheck 'wmi' 'Репозиторий WMI' 'ok' 'Согласован'))
+                } else {
+                    $out.Add((New-HealthCheck 'wmi' 'Репозиторий WMI' 'err' ('Код проверки ' + $code + ' — возможно повреждение') 'wmi' 'ЛЕЧИТЬ WMI'))
+                }
+            }
+        } catch {}
+    }
+
+    try {
+        $disabled = @()
+        foreach ($n in @('wuauserv', 'bits', 'cryptsvc', 'msiserver')) {
+            $s = Get-Service -Name $n -ErrorAction SilentlyContinue
+            if ($s -and $s.StartType -eq 'Disabled') { $disabled += $n }
+        }
+        if ($disabled.Count -gt 0) {
+            $out.Add((New-HealthCheck 'wu' 'Службы Windows Update' 'warn' ('Отключены: ' + ($disabled -join ', ')) 'wu' 'ИСПРАВИТЬ'))
+        } else {
+            $out.Add((New-HealthCheck 'wu' 'Службы Windows Update' 'ok' 'Не отключены'))
+        }
+    } catch {}
+
+    try {
+        $t = Get-Service -Name 'W32Time' -ErrorAction SilentlyContinue
+        if ($t) {
+            if ($t.Status -ne 'Running') {
+                $out.Add((New-HealthCheck 'time' 'Служба времени' 'warn' 'Остановлена — время может уходить' 'time' 'СИНХРОНИЗИРОВАТЬ'))
+            } else {
+                $out.Add((New-HealthCheck 'time' 'Служба времени' 'ok' 'Работает'))
+            }
+        }
+    } catch {}
+
+    try {
+        $bad = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+                 Where-Object { $_.ConfigManagerErrorCode -ne 0 })
+        if ($bad.Count -gt 0) {
+            $names = ($bad | Select-Object -First 3 | ForEach-Object { [string]$_.Name }) -join ', '
+            $out.Add((New-HealthCheck 'devices' 'Устройства с ошибками' 'warn' ($bad.Count.ToString() + ' шт.: ' + $names) 'drivers' 'ПЕРЕСКАНИРОВАТЬ'))
+        } else {
+            $out.Add((New-HealthCheck 'devices' 'Устройства с ошибками' 'ok' 'Не найдены'))
+        }
+    } catch {}
+
+    if (-not $Quick) {
+        try {
+            $events = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'System'; Level = 1, 2; StartTime = (Get-Date).AddDays(-7)
+            } -MaxEvents 60 -ErrorAction Stop)
+            if ($events.Count -gt 0) {
+                $top = ($events | Group-Object ProviderName | Sort-Object Count -Descending |
+                        Select-Object -First 2 | ForEach-Object { $_.Name + ' ×' + $_.Count }) -join ', '
+                $out.Add((New-HealthCheck 'events' 'Критические ошибки за 7 дней' 'warn' ($events.Count.ToString() + ' событий: ' + $top)))
+            } else {
+                $out.Add((New-HealthCheck 'events' 'Критические ошибки за 7 дней' 'ok' 'Не найдены'))
+            }
+        } catch {
+            $out.Add((New-HealthCheck 'events' 'Критические ошибки за 7 дней' 'info' 'Журнал недоступен или пуст'))
+        }
+    }
+
+    try {
+        $minidumps = @(Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot 'Minidump') -Filter '*.dmp' -File -Force -ErrorAction SilentlyContinue)
+        $crash = @(Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'CrashDumps') -Filter '*.dmp' -File -Force -ErrorAction SilentlyContinue)
+        $cnt = $minidumps.Count + $crash.Count
+        if ($cnt -gt 0) {
+            $out.Add((New-HealthCheck 'dumps' 'Дампы и отчёты об ошибках' 'warn' ($cnt.ToString() + ' файлов — можно очистить') 'cleanup' 'ОЧИСТИТЬ'))
+        } else {
+            $out.Add((New-HealthCheck 'dumps' 'Дампы и отчёты об ошибках' 'ok' 'Не найдены'))
+        }
+    } catch {}
+
+    if (-not $Quick) {
+        try {
+            $tempBytes = (Get-PathBytes $env:TEMP) + (Get-PathBytes (Join-Path $env:SystemRoot 'Temp'))
+            $tempMb = [math]::Round($tempBytes / 1MB, 0)
+            $out.Add((New-HealthCheck 'temp' 'Временные файлы' `
+                $(if ($tempMb -ge 2048) { 'warn' } else { 'ok' }) `
+                ('{0:N0} МБ во временных папках' -f $tempMb) 'cleanup' 'ОЧИСТИТЬ'))
+        } catch {}
+        try {
+            $updBytes = Get-PathBytes (Join-Path $env:SystemRoot 'SoftwareDistribution\Download')
+            $updMb = [math]::Round($updBytes / 1MB, 0)
+            $out.Add((New-HealthCheck 'updcache' 'Кэш обновлений Windows' `
+                $(if ($updMb -ge 1024) { 'warn' } else { 'ok' }) `
+                ('{0:N0} МБ загруженных обновлений' -f $updMb) 'cleanup' 'ОЧИСТИТЬ'))
+        } catch {}
+    }
+
+    try {
+        $sr = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -ErrorAction SilentlyContinue
+        if ($sr -and $null -ne $sr.DisableSR -and [int]$sr.DisableSR -eq 1) {
+            $out.Add((New-HealthCheck 'restore' 'Точки восстановления' 'warn' 'Защита системы отключена' 'restore' 'СОЗДАТЬ ТОЧКУ'))
+        } else {
+            $out.Add((New-HealthCheck 'restore' 'Точки восстановления' 'ok' 'Защита системы не отключена принудительно'))
+        }
+    } catch {}
+
+    try {
+        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' })
+        if ($adapters.Count -eq 0) {
+            $out.Add((New-HealthCheck 'network' 'Сетевые адаптеры' 'warn' 'Нет активного физического адаптера'))
+        } else {
+            $names = ($adapters | Select-Object -First 3 | ForEach-Object { [string]$_.Name }) -join ', '
+            $out.Add((New-HealthCheck 'network' 'Сетевые адаптеры' 'ok' ($adapters.Count.ToString() + ' активных: ' + $names)))
+        }
+    } catch {}
+
+    return $out
+}
+
+function Get-HealthReportText {
+    $checks = @(Get-SystemHealthReport)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PURPLE RUSH · отчёт о здоровье Windows')
+    [void]$sb.AppendLine(('Дата: ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
+    [void]$sb.AppendLine(('Версия: ' + $script:AppVersion))
+    [void]$sb.AppendLine('')
+    foreach ($c in $checks) {
+        $mark = switch ($c.Status) {
+            'ok'   { '[OK]  ' }
+            'warn' { '[!]   ' }
+            'err'  { '[ERR] ' }
+            default { '[i]   ' }
+        }
+        [void]$sb.AppendLine($mark + $c.Title + ': ' + $c.Detail)
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Это стандартные проверки Windows, а не гарантия исправления любой ошибки.')
+    return $sb.ToString()
+}
+
+function Invoke-QuickHealthFix {
+    $checks = @(Get-SystemHealthReport)
+    $targets = @($checks | Where-Object { $_.Fix -and @('time', 'wu', 'wmi', 'drivers') -contains $_.Fix })
+    if ($targets.Count -eq 0) {
+        Write-Log 'Быстрое лечение: проблем, которые можно исправить автоматически, не найдено' 'info'
+        return
+    }
+    foreach ($c in $targets) {
+        Write-Log ('Быстрое лечение: ' + $c.Title) 'step'
+        try {
+            switch ($c.Fix) {
+                'time'    { Invoke-TimeResync }
+                'wu'      { Invoke-WindowsUpdateServicesFix }
+                'wmi'     { Invoke-WmiRepair }
+                'drivers' { Invoke-DriverRescan }
+            }
+        } catch {
+            Write-Log ('Не удалось: ' + $c.Title + ' — ' + $_.Exception.Message) 'warn'
+        }
+    }
+    Write-Log 'Быстрое лечение завершено' 'ok'
+}
+
+function Get-CleanupPotential {
+    $targets = @(
+        @{ Name = 'TEMP'; Path = $env:TEMP },
+        @{ Name = 'Windows Temp'; Path = (Join-Path $env:SystemRoot 'Temp') },
+        @{ Name = 'Центр обновлений'; Path = (Join-Path $env:SystemRoot 'SoftwareDistribution\Download') },
+        @{ Name = 'Отчёты об ошибках'; Path = (Join-Path $env:ProgramData 'Microsoft\Windows\WER') },
+        @{ Name = 'Дампы'; Path = (Join-Path $env:LOCALAPPDATA 'CrashDumps') },
+        @{ Name = 'Кэш Steam'; Path = $(if ($script:SteamPath) { Join-Path $script:SteamPath 'appcache\httpcache' } else { '' }) }
+    )
+    $rows = @()
+    $total = [int64]0
+    foreach ($t in $targets) {
+        if (-not $t.Path) { continue }
+        $b = Get-PathBytes $t.Path
+        if ($b -le 0) { continue }
+        $total += $b
+        $rows += [pscustomobject]@{ Name = $t.Name; Bytes = $b }
+    }
+    return [pscustomobject]@{ TotalBytes = $total; Rows = $rows }
+}
+
+# ============================================================
 #  СПИСОК ОПТИМИЗАЦИЙ
 # ============================================================
 $script:Tweaks = @(
@@ -1439,6 +2423,21 @@ $script:Tweaks = @(
         Desc = 'Windows перестаёт раздавать обновления другим ПК и забирать канал во время игры. Сами обновления работают.'
         Apply = { Invoke-DeliveryOpt }; Undo = { Undo-DeliveryOpt } }
 
+    [pscustomobject]@{ Id = 'fullscreenopt'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить оптимизации полного экрана (глобально)'
+        Desc = 'FSE-поведение Windows для всех игр: честный эксклюзивный полный экран. На части систем ломает alt-tab — тестируйте.'
+        Apply = { Invoke-FullscreenOpt }; Undo = { Undo-FullscreenOpt } }
+
+    [pscustomobject]@{ Id = 'xboxsvc'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить службы Xbox'
+        Desc = 'XblAuthManager, XblGameSave, XboxNetApiSvc и XboxGipSvc. Освобождает ресурсы, но ломает Game Pass и Xbox-приложения.'
+        Apply = { Invoke-XboxServices }; Undo = { Undo-XboxServices } }
+
+    [pscustomobject]@{ Id = 'faststartup'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить быстрый запуск Windows'
+        Desc = 'Полное завершение работы вместо гибридного сна: чище загрузка, меньше «залипших» драйверов. Включение — обратно.'
+        Apply = { Invoke-FastStartupOff }; Undo = { Undo-FastStartupOff } }
+
     [pscustomobject]@{ Id = 'nagle'; Group = 'net'; Risk = $false; Default = $true
         Name = 'Отключить алгоритм Nagle'
         Desc = 'Мелкие пакеты уходят сразу: пинг стабильнее, регистрация попаданий точнее.'
@@ -1513,6 +2512,56 @@ $script:Tweaks = @(
         Name = 'Очистить кэш шейдеров DirectX'
         Desc = 'Удаляет старый кэш D3D/NVIDIA/AMD/Intel. Освобождает место и лечит артефакты; игра соберёт кэш заново.'
         Apply = { Invoke-ShaderClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'deepclean'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Глубокая очистка Windows'
+        Desc = 'TEMP, кэш обновлений и Delivery Optimization, WER, дампы, кэш браузеров, логи Steam/RUST и старые журналы. Корзину и настройки не трогает.'
+        Apply = { Invoke-DeepClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'updatecache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистить кэш обновлений Windows'
+        Desc = 'Останавливает службы обновления, очищает SoftwareDistribution\Download и кэш Delivery Optimization, затем возвращает службы.'
+        Apply = { Invoke-UpdateCacheClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'dumps'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Удалить дампы и отчёты об ошибках'
+        Desc = 'MEMORY.DMP, Minidump, CrashDumps, WER и LiveKernelReports. Освобождает место; сами ошибки это не исправляет.'
+        Apply = { Invoke-DumpClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'browsercache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Кэш браузеров'
+        Desc = 'Только Cache/Code Cache/GPUCache у Edge, Chrome, Brave, Vivaldi, Yandex, Firefox и Opera. Пароли, cookies и история не удаляются.'
+        Apply = { Invoke-BrowserCache }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'gamejunk'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Логи и дампы Steam / RUST'
+        Desc = 'Старые логи Steam, httpcache, crash dumps и *.dmp RUST. Файлы cfg, сохранения и настройки игры не затрагиваются.'
+        Apply = { Invoke-GameJunkClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'thumbcache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Кэш эскизов и иконок'
+        Desc = 'Удаляет thumbcache/iconcache. Занятые Explorer файлы пропускаются; для полной пересборки есть отдельная кнопка в «Ремонте».'
+        Apply = { Invoke-ThumbnailClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'winsxs'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистка WinSxS (DISM)'
+        Desc = 'DISM /StartComponentCleanup удаляет устаревшие компоненты. Долго (5–30 минут), но без удаления актуальных обновлений.'
+        Apply = { Invoke-WinSxSClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'oldwindows'; Group = 'clean'; Risk = $true; Default = $false
+        Name = 'Удалить Windows.old и следы установки'
+        Desc = 'Windows.old, $Windows.~BT, $Windows.~WS, $WinREAgent. Освобождает десятки ГБ, но откат к предыдущей версии Windows станет невозможен.'
+        Apply = { Invoke-OldWindowsClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'prefetchclean'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистить Prefetch'
+        Desc = 'Удаляет *.pf и ReadyBoot. Первые запуски приложений станут чуть медленнее, затем Windows соберёт кэш заново.'
+        Apply = { Invoke-PrefetchClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'eventlogs'; Group = 'clean'; Risk = $true; Default = $false
+        Name = 'Очистить журналы событий Windows'
+        Desc = 'Удаляет старые записи из журналов. Необратимо и мешает диагностике — используйте только осознанно после сбора отчётов.'
+        Apply = { Invoke-EventLogClean }; Undo = { } }
 )
 
 # Восстанавливаем выбор пользователя между запусками
@@ -1766,6 +2815,8 @@ namespace RustSuite
         public static Color BorderC   = Color.FromArgb(60, 40, 90);
         public static Color Accent    = Color.FromArgb(140, 50, 200);
         public static Color AccentLt  = Color.FromArgb(180, 80, 230);
+        public static Color Secondary = Color.FromArgb(255, 70, 190);
+        public static Color Glow      = Color.FromArgb(90, 40, 160);
         public static Color TextC     = Color.FromArgb(250, 240, 255);
         public static Color Muted     = Color.FromArgb(160, 140, 175);
         public static Color Ok        = Color.FromArgb(100, 190, 110);
@@ -1961,7 +3012,7 @@ namespace RustSuite
             using (LinearGradientBrush b = new LinearGradientBrush(sheen, Color.Transparent, Color.Transparent, LinearGradientMode.Horizontal))
             {
                 ColorBlend cb = new ColorBlend(3);
-                cb.Colors = new Color[] { Color.FromArgb(55, Theme.Accent), Color.FromArgb(150, Theme.AccentLt), Color.FromArgb(55, Theme.Accent) };
+                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(130, Theme.Secondary), Color.FromArgb(0, Theme.Accent) };
                 cb.Positions = new float[] { 0f, 0.5f, 1f };
                 b.InterpolationColors = cb;
                 g.FillRectangle(b, sheen);
@@ -1973,11 +3024,14 @@ namespace RustSuite
             using (LinearGradientBrush b = new LinearGradientBrush(glow, Color.Transparent, Color.Transparent, LinearGradientMode.Horizontal))
             {
                 ColorBlend cb = new ColorBlend(3);
-                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(160, Theme.AccentLt), Color.FromArgb(0, Theme.Accent) };
+                cb.Colors = new Color[] { Color.FromArgb(0, Theme.Accent), Color.FromArgb(160, Theme.Secondary), Color.FromArgb(0, Theme.Accent) };
                 cb.Positions = new float[] { 0f, 0.5f, 1f };
                 b.InterpolationColors = cb;
                 g.FillRectangle(b, glow);
             }
+            // Пользовательские Paint-обработчики (текст шапки) вызываются
+            // базовым OnPaint; без этого события Paint не срабатывает.
+            base.OnPaint(e);
         }
     }
 
@@ -2242,9 +3296,220 @@ namespace RustSuite
         }
     }
 
-    public class ProgressStrip : Control, IAnim
+    public class ThemeTile : Control, IAnim
     {
-        private double _v, _shown;
+        public string Title = "";
+        public string Sub = "";
+        public Color ColorA = Theme.Accent;
+        public Color ColorB = Theme.AccentLt;
+        public Color ColorC = Theme.Secondary;
+        private bool _sel, _hover;
+        private float _sa, _ha, _phase;
+
+        public bool Selected
+        {
+            get { return _sel; }
+            set { _sel = value; Anim.Add(this); Invalidate(); }
+        }
+
+        public ThemeTile()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Anim.Add(this); base.OnMouseLeave(e); }
+
+        public bool Tick()
+        {
+            _sa = Ease.Approach(_sa, _sel ? 1f : 0f, 0.2f);
+            _ha = Ease.Approach(_ha, _hover ? 1f : 0f, 0.22f);
+            if (_sel || _hover) { _phase += 0.022f; if (_phase > 1f) _phase -= 1f; }
+            Invalidate();
+            return !(Ease.Done(_sa, _sel ? 1f : 0f) && Ease.Done(_ha, _hover ? 1f : 0f));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            using (GraphicsPath p = Theme.Round(r, 10f))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    ColorA, ColorB, LinearGradientMode.ForwardDiagonal))
+                    g.FillPath(b, p);
+
+                using (LinearGradientBrush dark = new LinearGradientBrush(
+                    new Rectangle(0, Math.Max(0, Height - 46), Math.Max(2, Width), 46),
+                    Color.FromArgb(0, 0, 0, 0), Color.FromArgb(150, 0, 0, 0), LinearGradientMode.Vertical))
+                {
+                    GraphicsState st = g.Save();
+                    g.SetClip(p);
+                    g.FillRectangle(dark, 0, Height - 46, Width, 46);
+                    g.Restore(st);
+                }
+
+                if (_ha > 0.02f || _sel)
+                {
+                    GraphicsState st = g.Save();
+                    g.SetClip(p);
+                    float sx = (float)(_phase * (Width + 160.0)) - 80f;
+                    using (LinearGradientBrush sheen = new LinearGradientBrush(
+                        new Rectangle((int)sx, 0, 70, Math.Max(2, Height)),
+                        Color.FromArgb(0, 255, 255, 255), Color.FromArgb(0, 255, 255, 255),
+                        LinearGradientMode.Horizontal))
+                    {
+                        ColorBlend cb = new ColorBlend(3);
+                        cb.Colors = new Color[] { Color.FromArgb(0, 255, 255, 255), Color.FromArgb(45, 255, 255, 255), Color.FromArgb(0, 255, 255, 255) };
+                        cb.Positions = new float[] { 0f, 0.5f, 1f };
+                        sheen.InterpolationColors = cb;
+                        g.FillRectangle(sheen, new Rectangle((int)sx, 0, 70, Height));
+                    }
+                    g.Restore(st);
+                }
+
+                Color border = _sel ? Color.White : (_hover ? Color.FromArgb(200, 255, 255, 255) : Color.FromArgb(90, 255, 255, 255));
+                using (Pen pen = new Pen(border, _sel ? 2f : 1f)) g.DrawPath(pen, p);
+            }
+
+            TextRenderer.DrawText(g, Title, Theme.FName, new Rectangle(14, Height - 36, Width - 70, 18), Color.White,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, Sub, Theme.FSmall, new Rectangle(14, Height - 19, Width - 20, 14), Color.FromArgb(220, 240, 235, 255),
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+            int cy = 14;
+            using (SolidBrush b = new SolidBrush(ColorC)) g.FillEllipse(b, Width - 30, cy, 9, 9);
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(150, 255, 255, 255))) g.FillEllipse(b, Width - 18, cy + 3, 5, 5);
+
+            if (_sel)
+            {
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(230, 255, 255, 255)))
+                    g.FillEllipse(b, Width - 34, 10, 20, 20);
+                TextRenderer.DrawText(g, "✓", Theme.FSmall, new Rectangle(Width - 34, 9, 20, 20), Color.FromArgb(35, 15, 55),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            }
+        }
+    }
+
+    public class HealthRow : Control, IAnim
+    {
+        public string Title = "";
+        public string Detail = "";
+        public string ActionText = "";
+        private string _status = "info";
+        private bool _hover;
+        private float _ha, _phase;
+
+        public string Status
+        {
+            get { return _status; }
+            set { _status = value ?? "info"; Anim.Add(this); Invalidate(); }
+        }
+
+        public event EventHandler ActionClicked;
+
+        public HealthRow()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Cursor = Cursors.Default; Anim.Add(this); base.OnMouseLeave(e); }
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            Cursor = (e.X >= Width - 150 && !string.IsNullOrEmpty(ActionText)) ? Cursors.Hand : Cursors.Default;
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left && e.X >= Width - 150 && !string.IsNullOrEmpty(ActionText))
+            {
+                EventHandler h = ActionClicked;
+                if (h != null) h(this, EventArgs.Empty);
+            }
+        }
+
+        public bool Tick()
+        {
+            _ha = Ease.Approach(_ha, _hover ? 1f : 0f, 0.22f);
+            bool pulse = (_status == "warn" || _status == "err");
+            if (pulse) { _phase += 0.045f; if (_phase > 1f) _phase -= 1f; }
+            Invalidate();
+            return pulse || !Ease.Done(_ha, _hover ? 1f : 0f);
+        }
+
+        private Color StatusColor()
+        {
+            if (_status == "ok") return Theme.Ok;
+            if (_status == "warn") return Theme.Warn;
+            if (_status == "err") return Theme.Err;
+            return Theme.AccentLt;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill = Theme.Lerp(Theme.CardBg, Theme.CardHover, _ha);
+            using (GraphicsPath p = Theme.Round(r, 9f))
+            {
+                using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                using (Pen pen = new Pen(Theme.Lerp(Theme.BorderC, Color.FromArgb(110, 255, 255, 255), _ha), 1f))
+                    g.DrawPath(pen, p);
+            }
+            Color sc = StatusColor();
+            float pulse = 0.35f + 0.25f * (float)Math.Sin(_phase * Math.PI * 2.0);
+            if (_status == "warn" || _status == "err")
+                using (SolidBrush glow = new SolidBrush(Color.FromArgb((int)(50 * pulse), sc.R, sc.G, sc.B)))
+                    g.FillEllipse(glow, 13, Height / 2 - 7, 14, 14);
+            using (SolidBrush dot = new SolidBrush(sc))
+                g.FillEllipse(dot, 17, Height / 2 - 3, 6, 6);
+            using (SolidBrush bar = new SolidBrush(Color.FromArgb(110, sc)))
+                g.FillRectangle(bar, 0, 12, 3, Height - 24);
+
+            int actionW = string.IsNullOrEmpty(ActionText) ? 0 : 132;
+            int tw = Width - 42 - actionW;
+            if (tw < 80) tw = 80;
+            TextRenderer.DrawText(g, Title, Theme.FName, new Rectangle(30, 7, tw, 19), Theme.TextC,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            TextRenderer.DrawText(g, Detail, Theme.FSmall, new Rectangle(30, 26, tw, Height - 29), Theme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+
+            if (actionW > 0 && Width > 220)
+            {
+                int bw = 118, bh = 26;
+                int bx = Width - bw - 14;
+                int by = (Height - bh) / 2;
+                using (GraphicsPath p = Theme.Round(new RectangleF(bx, by, bw, bh), 8f))
+                {
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(30, sc.R, sc.G, sc.B))) g.FillPath(b, p);
+                    using (Pen pen = new Pen(Color.FromArgb(120, sc.R, sc.G, sc.B), 1f)) g.DrawPath(pen, p);
+                }
+                TextRenderer.DrawText(g, ActionText, Theme.FSmall, new Rectangle(bx, by, bw, bh), sc,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
+        }
+    }
+
+    public class ProgressStrip : Control, IAnim
+    {        private double _v, _shown;
         private float _phase;
         public bool Shimmer = true;
 
@@ -2510,7 +3775,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -2518,6 +3783,70 @@ if ($SelfTest) {
             }
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
     }
+
+    # Новые движки очистки, ремонта и диагностики доступны
+    foreach ($fn in 'Invoke-DeepClean', 'Invoke-UpdateCacheClean', 'Invoke-DumpClean',
+                    'Invoke-BrowserCache', 'Invoke-GameJunkClean', 'Invoke-ThumbnailClean',
+                    'Invoke-WinSxSClean', 'Invoke-OldWindowsClean', 'Invoke-PrefetchClean',
+                    'Invoke-EventLogClean', 'Invoke-SfcScan', 'Invoke-DismRestore',
+                    'Invoke-DismComponentCleanup', 'Invoke-ChkdskScan', 'Invoke-WindowsUpdateReset',
+                    'Invoke-NetworkReset', 'Invoke-WmiRepair', 'Invoke-TimeResync',
+                    'Invoke-DriverRescan', 'Invoke-SpoolerReset', 'Invoke-IconCacheRebuild',
+                    'Get-SystemHealthReport', 'Get-HealthReportText', 'Invoke-QuickHealthFix',
+                    'Get-CleanupPotential', 'Test-PendingReboot') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ("MISSING FUNCTION: " + $fn); $fail++
+        }
+    }
+
+    # Все новые модули очистки присутствуют в списке
+    foreach ($id in 'deepclean', 'updatecache', 'dumps', 'browsercache', 'gamejunk',
+                    'thumbcache', 'winsxs', 'oldwindows', 'prefetchclean', 'eventlogs') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ("MISSING CLEANUP TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Иконка лаунчера лежит рядом с исходниками
+    try {
+        $iconPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\rust-optimizer.ico'
+        if (-not (Test-Path -LiteralPath $iconPath)) {
+            Write-Host 'MISSING APP ICON'; $fail++
+        } else {
+            $icoBytes = [IO.File]::ReadAllBytes($iconPath)
+            if ($icoBytes.Length -lt 10000 -or $icoBytes[0] -ne 0 -or $icoBytes[1] -ne 0 -or $icoBytes[2] -ne 1 -or $icoBytes[3] -ne 0) {
+                Write-Host 'APP ICON IS INVALID'; $fail++
+            }
+        }
+    } catch { Write-Host 'APP ICON CHECK ERROR'; $fail++ }
+
+    # Безопасная очистка действительно удаляет только содержимое своей папки
+    $cleanTmp = Join-Path $env:TEMP ('rustopt-clean-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $cleanTmp -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $cleanTmp 'a.tmp') -Value ('x' * 2048) -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $cleanTmp 'b.tmp') -Value ('y' * 2048) -Encoding ASCII
+        $subDir = Join-Path $cleanTmp 'nested'
+        New-Item -ItemType Directory -Path $subDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $subDir 'c.tmp') -Value ('z' * 2048) -Encoding ASCII
+        Reset-CleanMeter
+        $null = Clear-FolderSafe $cleanTmp
+        $left = @(Get-ChildItem -LiteralPath $cleanTmp -Force -ErrorAction SilentlyContinue).Count
+        if ($left -ne 0) { Write-Host ('CLEANUP LEFT FILES: ' + $left); $fail++ }
+        if ($script:CleanObjects -ne 3) { Write-Host ('CLEANUP METER OBJECTS: ' + $script:CleanObjects); $fail++ }
+        if ($script:CleanBytes -lt 4000) { Write-Host ('CLEANUP METER BYTES: ' + $script:CleanBytes); $fail++ }
+    } catch {
+        Write-Host ('CLEANUP CHECK ERROR: ' + $_.Exception.Message); $fail++
+    } finally {
+        Remove-Item -LiteralPath $cleanTmp -Recurse -Force -ErrorAction SilentlyContinue
+        Reset-CleanMeter
+    }
+
+    # Проверка незавершённой перезагрузки не должна падать
+    try {
+        $pending = Test-PendingReboot
+        if ($pending -isnot [bool]) { Write-Host 'PENDING REBOOT RETURN TYPE'; $fail++ }
+    } catch { Write-Host ('PENDING REBOOT ERROR: ' + $_.Exception.Message); $fail++ }
 
     # Перезагрузка: shutdown.exe присутствует, аргументы корректны
     try {
@@ -2579,13 +3908,19 @@ function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 # ---------- Палитры ----------
 $script:Themes = @(
-    @{ Name='ПУРПУРНАЯ';  Bg=[System.Drawing.Color]::FromArgb(18,10,28);  Panel=[System.Drawing.Color]::FromArgb(28,15,42);  Card=[System.Drawing.Color]::FromArgb(36,20,58);  CardHover=[System.Drawing.Color]::FromArgb(48,28,72);  Border=[System.Drawing.Color]::FromArgb(70,45,110);  Accent=[System.Drawing.Color]::FromArgb(160,60,220);  AccentLt=[System.Drawing.Color]::FromArgb(200,100,255); TextC=[System.Drawing.Color]::FromArgb(245,240,255); Muted=[System.Drawing.Color]::FromArgb(170,150,190); Ok=[System.Drawing.Color]::FromArgb(120,200,120); Warn=[System.Drawing.Color]::FromArgb(240,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,14,38) },
-    @{ Name='ТЁМНО-СИНЯЯ'; Bg=[System.Drawing.Color]::FromArgb(10,14,26); Panel=[System.Drawing.Color]::FromArgb(16,20,36); Card=[System.Drawing.Color]::FromArgb(22,26,48); CardHover=[System.Drawing.Color]::FromArgb(30,36,60); Border=[System.Drawing.Color]::FromArgb(50,60,100); Accent=[System.Drawing.Color]::FromArgb(60,120,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,160,255); TextC=[System.Drawing.Color]::FromArgb(230,235,245); Muted=[System.Drawing.Color]::FromArgb(140,150,170); Ok=[System.Drawing.Color]::FromArgb(80,220,130);  Warn=[System.Drawing.Color]::FromArgb(250,190,50);   Err=[System.Drawing.Color]::FromArgb(255,90,110);  Field=[System.Drawing.Color]::FromArgb(14,16,30) },
-    @{ Name='ИЗУМРУДНАЯ';  Bg=[System.Drawing.Color]::FromArgb(10,20,14); Panel=[System.Drawing.Color]::FromArgb(15,28,20); Card=[System.Drawing.Color]::FromArgb(20,36,28); CardHover=[System.Drawing.Color]::FromArgb(28,48,36); Border=[System.Drawing.Color]::FromArgb(60,100,70);  Accent=[System.Drawing.Color]::FromArgb(60,220,100); AccentLt=[System.Drawing.Color]::FromArgb(100,255,150); TextC=[System.Drawing.Color]::FromArgb(240,245,235); Muted=[System.Drawing.Color]::FromArgb(160,175,160); Ok=[System.Drawing.Color]::FromArgb(100,240,120); Warn=[System.Drawing.Color]::FromArgb(240,210,60);   Err=[System.Drawing.Color]::FromArgb(240,100,110); Field=[System.Drawing.Color]::FromArgb(12,18,14) },
-    @{ Name='КРИМСОН';     Bg=[System.Drawing.Color]::FromArgb(26,10,14); Panel=[System.Drawing.Color]::FromArgb(36,15,22); Card=[System.Drawing.Color]::FromArgb(48,22,30); CardHover=[System.Drawing.Color]::FromArgb(60,30,42); Border=[System.Drawing.Color]::FromArgb(110,45,70); Accent=[System.Drawing.Color]::FromArgb(255,60,90);  AccentLt=[System.Drawing.Color]::FromArgb(255,120,140); TextC=[System.Drawing.Color]::FromArgb(245,230,235); Muted=[System.Drawing.Color]::FromArgb(180,140,160); Ok=[System.Drawing.Color]::FromArgb(100,220,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(30,12,16) }
+    @{ Name='PURPLE RUSH'; Bg=[System.Drawing.Color]::FromArgb(18,10,28);  Panel=[System.Drawing.Color]::FromArgb(28,15,42);  Card=[System.Drawing.Color]::FromArgb(36,20,58);  CardHover=[System.Drawing.Color]::FromArgb(48,28,72);  Border=[System.Drawing.Color]::FromArgb(70,45,110);  Accent=[System.Drawing.Color]::FromArgb(160,60,220);  AccentLt=[System.Drawing.Color]::FromArgb(200,100,255); Secondary=[System.Drawing.Color]::FromArgb(255,79,216); Glow=[System.Drawing.Color]::FromArgb(106,31,176); TextC=[System.Drawing.Color]::FromArgb(245,240,255); Muted=[System.Drawing.Color]::FromArgb(170,150,190); Ok=[System.Drawing.Color]::FromArgb(120,200,120); Warn=[System.Drawing.Color]::FromArgb(240,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,14,38) },
+    @{ Name='MIDNIGHT';    Bg=[System.Drawing.Color]::FromArgb(10,14,26); Panel=[System.Drawing.Color]::FromArgb(16,20,36); Card=[System.Drawing.Color]::FromArgb(22,30,48); CardHover=[System.Drawing.Color]::FromArgb(30,40,60); Border=[System.Drawing.Color]::FromArgb(50,64,100); Accent=[System.Drawing.Color]::FromArgb(60,120,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,160,255); Secondary=[System.Drawing.Color]::FromArgb(0,212,255); Glow=[System.Drawing.Color]::FromArgb(30,80,176); TextC=[System.Drawing.Color]::FromArgb(230,235,245); Muted=[System.Drawing.Color]::FromArgb(140,150,170); Ok=[System.Drawing.Color]::FromArgb(80,220,130);  Warn=[System.Drawing.Color]::FromArgb(250,190,50);   Err=[System.Drawing.Color]::FromArgb(255,90,110);  Field=[System.Drawing.Color]::FromArgb(14,16,30) },
+    @{ Name='EMERALD';     Bg=[System.Drawing.Color]::FromArgb(10,20,14); Panel=[System.Drawing.Color]::FromArgb(15,28,20); Card=[System.Drawing.Color]::FromArgb(20,36,28); CardHover=[System.Drawing.Color]::FromArgb(28,48,36); Border=[System.Drawing.Color]::FromArgb(60,100,70);  Accent=[System.Drawing.Color]::FromArgb(60,220,100); AccentLt=[System.Drawing.Color]::FromArgb(100,255,150); Secondary=[System.Drawing.Color]::FromArgb(0,255,176); Glow=[System.Drawing.Color]::FromArgb(30,140,70); TextC=[System.Drawing.Color]::FromArgb(240,245,235); Muted=[System.Drawing.Color]::FromArgb(160,175,160); Ok=[System.Drawing.Color]::FromArgb(100,240,120); Warn=[System.Drawing.Color]::FromArgb(240,210,60);   Err=[System.Drawing.Color]::FromArgb(240,100,110); Field=[System.Drawing.Color]::FromArgb(12,18,14) },
+    @{ Name='CRIMSON';     Bg=[System.Drawing.Color]::FromArgb(26,10,14); Panel=[System.Drawing.Color]::FromArgb(36,15,22); Card=[System.Drawing.Color]::FromArgb(48,22,30); CardHover=[System.Drawing.Color]::FromArgb(60,30,42); Border=[System.Drawing.Color]::FromArgb(110,45,70); Accent=[System.Drawing.Color]::FromArgb(255,60,90);  AccentLt=[System.Drawing.Color]::FromArgb(255,120,140); Secondary=[System.Drawing.Color]::FromArgb(255,154,60); Glow=[System.Drawing.Color]::FromArgb(176,30,60); TextC=[System.Drawing.Color]::FromArgb(245,230,235); Muted=[System.Drawing.Color]::FromArgb(180,140,160); Ok=[System.Drawing.Color]::FromArgb(100,220,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(30,12,16) },
+    @{ Name='CYBERPUNK';   Bg=[System.Drawing.Color]::FromArgb(5,10,18);  Panel=[System.Drawing.Color]::FromArgb(8,18,30);  Card=[System.Drawing.Color]::FromArgb(12,26,42);  CardHover=[System.Drawing.Color]::FromArgb(18,36,54);  Border=[System.Drawing.Color]::FromArgb(30,74,102);  Accent=[System.Drawing.Color]::FromArgb(0,229,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,240,255); Secondary=[System.Drawing.Color]::FromArgb(255,43,214); Glow=[System.Drawing.Color]::FromArgb(0,136,170); TextC=[System.Drawing.Color]::FromArgb(230,250,255); Muted=[System.Drawing.Color]::FromArgb(122,160,180); Ok=[System.Drawing.Color]::FromArgb(50,255,154); Warn=[System.Drawing.Color]::FromArgb(255,210,60);   Err=[System.Drawing.Color]::FromArgb(255,79,120); Field=[System.Drawing.Color]::FromArgb(6,16,26) },
+    @{ Name='ROYAL GOLD';  Bg=[System.Drawing.Color]::FromArgb(18,16,10); Panel=[System.Drawing.Color]::FromArgb(28,24,16); Card=[System.Drawing.Color]::FromArgb(38,32,22); CardHover=[System.Drawing.Color]::FromArgb(50,40,28); Border=[System.Drawing.Color]::FromArgb(100,80,42); Accent=[System.Drawing.Color]::FromArgb(212,160,50); AccentLt=[System.Drawing.Color]::FromArgb(255,210,100); Secondary=[System.Drawing.Color]::FromArgb(255,240,160); Glow=[System.Drawing.Color]::FromArgb(140,110,30); TextC=[System.Drawing.Color]::FromArgb(255,248,230); Muted=[System.Drawing.Color]::FromArgb(180,163,130); Ok=[System.Drawing.Color]::FromArgb(140,210,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,18,12) },
+    @{ Name='ARCTIC';      Bg=[System.Drawing.Color]::FromArgb(10,16,24); Panel=[System.Drawing.Color]::FromArgb(16,24,32); Card=[System.Drawing.Color]::FromArgb(22,34,44); CardHover=[System.Drawing.Color]::FromArgb(30,46,58); Border=[System.Drawing.Color]::FromArgb(58,86,104); Accent=[System.Drawing.Color]::FromArgb(90,200,255); AccentLt=[System.Drawing.Color]::FromArgb(150,230,255); Secondary=[System.Drawing.Color]::FromArgb(200,244,255); Glow=[System.Drawing.Color]::FromArgb(42,124,160); TextC=[System.Drawing.Color]::FromArgb(240,250,255); Muted=[System.Drawing.Color]::FromArgb(146,168,180); Ok=[System.Drawing.Color]::FromArgb(100,224,160); Warn=[System.Drawing.Color]::FromArgb(255,210,100);  Err=[System.Drawing.Color]::FromArgb(255,110,130); Field=[System.Drawing.Color]::FromArgb(12,18,24) },
+    @{ Name='SAKURA';      Bg=[System.Drawing.Color]::FromArgb(24,10,18); Panel=[System.Drawing.Color]::FromArgb(36,16,28); Card=[System.Drawing.Color]::FromArgb(48,22,38); CardHover=[System.Drawing.Color]::FromArgb(62,30,48); Border=[System.Drawing.Color]::FromArgb(112,64,90); Accent=[System.Drawing.Color]::FromArgb(255,92,168); AccentLt=[System.Drawing.Color]::FromArgb(255,154,204); Secondary=[System.Drawing.Color]::FromArgb(255,200,160); Glow=[System.Drawing.Color]::FromArgb(176,38,110); TextC=[System.Drawing.Color]::FromArgb(255,240,246); Muted=[System.Drawing.Color]::FromArgb(188,142,166); Ok=[System.Drawing.Color]::FromArgb(120,216,144); Warn=[System.Drawing.Color]::FromArgb(255,200,100);  Err=[System.Drawing.Color]::FromArgb(255,92,120);  Field=[System.Drawing.Color]::FromArgb(30,12,22) },
+    @{ Name='OBSIDIAN';    Bg=[System.Drawing.Color]::FromArgb(10,10,12); Panel=[System.Drawing.Color]::FromArgb(18,18,22); Card=[System.Drawing.Color]::FromArgb(26,26,32); CardHover=[System.Drawing.Color]::FromArgb(36,36,44); Border=[System.Drawing.Color]::FromArgb(60,60,72);  Accent=[System.Drawing.Color]::FromArgb(180,180,200); AccentLt=[System.Drawing.Color]::FromArgb(230,230,240); Secondary=[System.Drawing.Color]::FromArgb(140,140,160); Glow=[System.Drawing.Color]::FromArgb(80,80,94); TextC=[System.Drawing.Color]::FromArgb(248,248,250); Muted=[System.Drawing.Color]::FromArgb(152,152,166); Ok=[System.Drawing.Color]::FromArgb(140,216,144); Warn=[System.Drawing.Color]::FromArgb(216,192,112); Err=[System.Drawing.Color]::FromArgb(224,104,120); Field=[System.Drawing.Color]::FromArgb(14,14,18) },
+    @{ Name='TOXIC';       Bg=[System.Drawing.Color]::FromArgb(10,16,6);  Panel=[System.Drawing.Color]::FromArgb(18,26,12); Card=[System.Drawing.Color]::FromArgb(26,36,18); CardHover=[System.Drawing.Color]::FromArgb(36,48,26); Border=[System.Drawing.Color]::FromArgb(74,100,42);  Accent=[System.Drawing.Color]::FromArgb(168,230,60); AccentLt=[System.Drawing.Color]::FromArgb(212,255,100); Secondary=[System.Drawing.Color]::FromArgb(240,255,60); Glow=[System.Drawing.Color]::FromArgb(90,140,30); TextC=[System.Drawing.Color]::FromArgb(246,255,234); Muted=[System.Drawing.Color]::FromArgb(160,180,138); Ok=[System.Drawing.Color]::FromArgb(140,255,100); Warn=[System.Drawing.Color]::FromArgb(255,230,60);   Err=[System.Drawing.Color]::FromArgb(255,92,100);  Field=[System.Drawing.Color]::FromArgb(14,20,8) }
 )
 
-$script:ThemeName = 'ПУРПУРНАЯ'
+$script:ThemeName = 'PURPLE RUSH'
 
 function Set-ThemeColors {
     param($Palette)
@@ -2597,6 +3932,8 @@ function Set-ThemeColors {
     [RustSuite.Theme]::BorderC   = $Palette.Border
     [RustSuite.Theme]::Accent    = $Palette.Accent
     [RustSuite.Theme]::AccentLt  = $Palette.AccentLt
+    [RustSuite.Theme]::Secondary = $Palette.Secondary
+    [RustSuite.Theme]::Glow      = $Palette.Glow
     [RustSuite.Theme]::TextC     = $Palette.TextC
     [RustSuite.Theme]::Muted     = $Palette.Muted
     [RustSuite.Theme]::Ok        = $Palette.Ok
@@ -2641,6 +3978,12 @@ function Update-ControlTree {
                 }
             } elseif ($c -is [System.Windows.Forms.TextBox]) {
                 $c.BackColor = [RustSuite.Theme]::Field
+                $c.ForeColor = [RustSuite.Theme]::TextC
+            } elseif ($c -is [System.Windows.Forms.ComboBox] -or $c -is [System.Windows.Forms.ListBox]) {
+                $c.BackColor = [RustSuite.Theme]::Field
+                $c.ForeColor = [RustSuite.Theme]::TextC
+            } elseif ($c -is [System.Windows.Forms.CheckBox]) {
+                $c.BackColor = [System.Drawing.Color]::Transparent
                 $c.ForeColor = [RustSuite.Theme]::TextC
             }
         } catch {}
@@ -2906,27 +4249,24 @@ function Show-SettingsPanel {
     $script:RowHost.Controls.Add($lblTheme)
 
     $btnY = S 52
-    $btnH = S 34
+    $tileH = S 64
     $gap  = S 8
-    $sw   = S 8
     $colW = [int](($w - $gap) / 2)
     $idx  = 0
     foreach ($t in $script:Themes) {
         $rx = if ($idx % 2 -eq 0) { 0 } else { $colW + $gap }
-        $ry = $btnY + [int]([Math]::Floor($idx / 2) * ($btnH + $gap))
+        $ry = $btnY + [int]([Math]::Floor($idx / 2) * ($tileH + $gap))
 
-        $swatch = New-Object System.Windows.Forms.Panel
-        $swatch.BackColor = $t.Accent
-        $swatch.Bounds    = New-Object System.Drawing.Rectangle $rx, $ry, $sw, $btnH
-        $script:RowHost.Controls.Add($swatch)
-
-        $btn = New-Object RustSuite.FlatButton
-        $btn.Text   = $(if ($t.Name -eq $script:ThemeName) { '✓ ' + $t.Name } else { $t.Name })
-        $btn.Font   = [RustSuite.Theme]::FBtn
-        $btn.Style  = $(if ($t.Name -eq $script:ThemeName) { 'Primary' } else { 'Ghost' })
-        $btn.Bounds = New-Object System.Drawing.Rectangle ($rx + $sw), $ry, ($colW - $sw), $btnH
-        $btn.Tag    = $t
-        $btn.Add_Click({
+        $tile = New-Object RustSuite.ThemeTile
+        $tile.Title    = [string]$t.Name
+        $tile.Sub      = 'анимированный градиент'
+        $tile.ColorA   = $t.Bg
+        $tile.ColorB   = $t.Accent
+        $tile.ColorC   = $t.Secondary
+        $tile.Selected = ($t.Name -eq $script:ThemeName)
+        $tile.Bounds   = New-Object System.Drawing.Rectangle $rx, $ry, $colW, $tileH
+        $tile.Tag      = $t
+        $tile.Add_Click({
             param($s, $e)
             $th = $s.Tag
             Apply-Theme $th.Name -Save
@@ -2935,11 +4275,30 @@ function Show-SettingsPanel {
             Set-Status ('Тема: ' + $th.Name) '#8B949E'
             Restart-SettingsSoon
         })
-        $script:RowHost.Controls.Add($btn)
+        $script:RowHost.Controls.Add($tile)
         $idx++
     }
 
-    $y = $btnY + [int]([Math]::Ceiling($idx / 2) * ($btnH + $gap)) + (S 12)
+    $y = $btnY + [int]([Math]::Ceiling($idx / 2) * ($tileH + $gap)) + (S 10)
+
+    $btnRandom = New-Object RustSuite.FlatButton
+    $btnRandom.Style  = 'Ghost'
+    $btnRandom.Text   = '✦  СЛУЧАЙНАЯ ТЕМА'
+    $btnRandom.Font   = [RustSuite.Theme]::FSmall
+    $btnRandom.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 32)
+    $btnRandom.Add_Click({
+        $pool = @($script:Themes | Where-Object { $_.Name -ne $script:ThemeName })
+        if ($pool.Count -gt 0) {
+            $th = $pool | Get-Random
+            Apply-Theme $th.Name -Save
+            Update-ThemeSurfaces
+            Write-Log ('Случайная тема: ' + $th.Name) 'ok'
+            Set-Status ('Тема: ' + $th.Name) '#8B949E'
+            Restart-SettingsSoon
+        }
+    })
+    $script:RowHost.Controls.Add($btnRandom)
+    $y += S 44
 
     # --- Система ---
     $lblSys = New-Object System.Windows.Forms.Label
@@ -2981,6 +4340,67 @@ function Show-SettingsPanel {
     })
     $script:RowHost.Controls.Add($btnCopySys)
     $y += S 44
+
+    $halfW = [int](($w - (S 8)) / 2)
+    $btnData = New-Object RustSuite.FlatButton
+    $btnData.Style  = 'Ghost'
+    $btnData.Text   = 'ПАПКА ДАННЫХ'
+    $btnData.Font   = [RustSuite.Theme]::FSmall
+    $btnData.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 30)
+    $btnData.Add_Click({ Open-Explorer $script:Root })
+    $script:RowHost.Controls.Add($btnData)
+
+    $btnLog = New-Object RustSuite.FlatButton
+    $btnLog.Style  = 'Ghost'
+    $btnLog.Text   = 'ОТКРЫТЬ ЖУРНАЛ'
+    $btnLog.Font   = [RustSuite.Theme]::FSmall
+    $btnLog.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, ($w - $halfW - (S 8)), (S 30)
+    $btnLog.Add_Click({
+        if (Test-Path -LiteralPath $script:LogFile) { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:LogFile + '"') | Out-Null }
+        else { Write-Log 'Журнал ещё не создан' 'info' }
+    })
+    $script:RowHost.Controls.Add($btnLog)
+    $y += S 42
+
+    # --- Поведение ---
+    $lblBeh = New-Object System.Windows.Forms.Label
+    $lblBeh.Text      = 'ПОВЕДЕНИЕ'
+    $lblBeh.Font      = [RustSuite.Theme]::FHead
+    $lblBeh.ForeColor = [RustSuite.Theme]::Muted
+    $lblBeh.BackColor = [System.Drawing.Color]::Transparent
+    $lblBeh.AutoSize  = $false
+    $lblBeh.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblBeh)
+    $y += S 22
+
+    $chkAutoClose = New-Object System.Windows.Forms.CheckBox
+    $chkAutoClose.Text      = 'Закрывать оптимизатор после запуска RUST'
+    $chkAutoClose.Font      = [RustSuite.Theme]::FSub
+    $chkAutoClose.ForeColor = [RustSuite.Theme]::TextC
+    $chkAutoClose.BackColor = [System.Drawing.Color]::Transparent
+    $chkAutoClose.FlatStyle = 'Flat'
+    $chkAutoClose.AutoSize  = $false
+    $chkAutoClose.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 24)
+    $chkAutoClose.Checked   = [bool]$script:AutoClose
+    $chkAutoClose.Add_CheckedChanged({
+        param($s, $e)
+        $script:AutoClose = [bool]$s.Checked
+        $script:State['AutoClose'] = $script:AutoClose
+        Save-State
+        Set-Status $(if ($script:AutoClose) { 'Автозакрытие после запуска RUST включено' } else { 'Автозакрытие отключено' }) '#8B949E'
+    })
+    $script:RowHost.Controls.Add($chkAutoClose)
+    $y += S 28
+
+    $lblBehHint = New-Object System.Windows.Forms.Label
+    $lblBehHint.Text      = 'После нажатия «ЗАПУСТИТЬ RUST» программа дождётся RustClient.exe и закроется сама.'
+    $lblBehHint.Font      = [RustSuite.Theme]::FSmall
+    $lblBehHint.ForeColor = [RustSuite.Theme]::Muted
+    $lblBehHint.BackColor = [System.Drawing.Color]::Transparent
+    $lblBehHint.AutoSize  = $false
+    $lblBehHint.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 30)
+    $script:RowHost.Controls.Add($lblBehHint)
+    $y += S 42
 
     # --- Мониторинг ---
     $lblMon = New-Object System.Windows.Forms.Label
@@ -3161,6 +4581,14 @@ $form.Size        = New-Object System.Drawing.Size $winW, $winH
 $form.MinimumSize = New-Object System.Drawing.Size (S 1000), (S 640)
 $form.Font        = [RustSuite.Theme]::FSub
 
+# Handle создаётся выше для чтения DPI, поэтому CenterScreen успевает
+# примениться к размеру по умолчанию. Позиционируем окно вручную уже
+# после установки финального размера — иначе часть окна уходит за экран.
+$px = $area.Left + [int][Math]::Max(0, (($area.Width - $winW) / 2))
+$py = $area.Top  + [int][Math]::Max(0, (($area.Height - $winH) / 2))
+$form.StartPosition = 'Manual'
+$form.Location = New-Object System.Drawing.Point $px, $py
+
 # Включаем двойную буферизацию контейнеров: меньше мерцания при перерисовке.
 function Enable-DoubleBuffer {
     param($Control)
@@ -3239,20 +4667,25 @@ $footer.Add_Paint({
 
 $btnRun = New-Object RustSuite.FlatButton
 $btnRun.Style   = 'Primary'
-$btnRun.Text    = 'ОПТИМИЗИРОВАТЬ ПК'
-$btnRun.Bounds  = New-Object System.Drawing.Rectangle (S 26), (S 22), (S 300), (S 50)
+$btnRun.Text    = '▶  ОПТИМИЗИРОВАТЬ ПК'
+$btnRun.Bounds  = New-Object System.Drawing.Rectangle (S 26), (S 22), (S 286), (S 50)
 
 $btnUndo = New-Object RustSuite.FlatButton
 $btnUndo.Style  = 'Ghost'
-$btnUndo.Text   = 'ОТКАТ'
-$btnUndo.Bounds = New-Object System.Drawing.Rectangle (S 338), (S 22), (S 150), (S 50)
+$btnUndo.Text   = '↺  ОТКАТ'
+$btnUndo.Bounds = New-Object System.Drawing.Rectangle (S 320), (S 22), (S 132), (S 50)
+
+$btnScan = New-Object RustSuite.FlatButton
+$btnScan.Style  = 'Ghost'
+$btnScan.Text   = '◈  ДИАГНОСТИКА'
+$btnScan.Bounds = New-Object System.Drawing.Rectangle (S 460), (S 22), (S 158), (S 50)
 
 $script:Spinner = New-Object RustSuite.Spinner
-$script:Spinner.Bounds = New-Object System.Drawing.Rectangle (S 506), (S 26), (S 20), (S 20)
+$script:Spinner.Bounds = New-Object System.Drawing.Rectangle (S 628), (S 26), (S 20), (S 20)
 $script:Spinner.BackColor = [System.Drawing.Color]::Transparent
 
 $script:Progress = New-Object RustSuite.ProgressStrip
-$script:Progress.Bounds = New-Object System.Drawing.Rectangle (S 538), (S 30), (S 500), (S 7)
+$script:Progress.Bounds = New-Object System.Drawing.Rectangle (S 660), (S 30), (S 460), (S 7)
 $script:Progress.BackColor = [System.Drawing.Color]::Transparent
 
 $script:Status = New-Object System.Windows.Forms.Label
@@ -3261,16 +4694,16 @@ $script:Status.ForeColor = [RustSuite.Theme]::Muted
 $script:Status.BackColor = [System.Drawing.Color]::Transparent
 $script:Status.Font      = [RustSuite.Theme]::FSmall
 $script:Status.AutoSize  = $false
-$script:Status.Bounds    = New-Object System.Drawing.Rectangle (S 538), (S 48), (S 500), (S 20)
+$script:Status.Bounds    = New-Object System.Drawing.Rectangle (S 660), (S 48), (S 460), (S 20)
 
-$footer.Controls.AddRange(@($btnRun, $btnUndo, $script:Spinner, $script:Progress, $script:Status))
+$footer.Controls.AddRange(@($btnRun, $btnUndo, $btnScan, $script:Spinner, $script:Progress, $script:Status))
 
 $footer.Add_Resize({
     $w = $footer.ClientSize.Width
-    $x = (S 538)
-    if ($w - $x - (S 26) -lt (S 120)) { $x = (S 506) + (S 34) }
+    $x = (S 660)
+    if ($w - $x - (S 26) -lt (S 140)) { $x = (S 628) + (S 34) }
     $script:Progress.Left  = $x
-    $script:Progress.Width = [Math]::Max((S 120), $w - $x - (S 26))
+    $script:Progress.Width = [Math]::Max((S 140), $w - $x - (S 26))
     $script:Status.Left    = $x
     $script:Status.Width   = $script:Progress.Width
 })
@@ -3306,7 +4739,7 @@ $nav.BackColor = [RustSuite.Theme]::Bg
 $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock      = 'Top'
-$navTop.Height    = S 278
+$navTop.Height    = S 286
 $navTop.BackColor = [RustSuite.Theme]::Bg
 
 $script:Groups = @(
@@ -3315,6 +4748,7 @@ $script:Groups = @(
     @{ Id = 'rust';  Glyph = '▶'; Title = 'RUST';    Sub = 'профиль игры' },
     @{ Id = 'binds'; Glyph = '⌨'; Title = 'БИНДЫ';   Sub = 'keys.cfg одной кнопкой' },
     @{ Id = 'clean'; Glyph = '✦'; Title = 'ОЧИСТКА'; Sub = 'мусор и фоновые' },
+    @{ Id = 'repair'; Glyph = '◈'; Title = 'РЕМОНТ'; Sub = 'проверка и лечение Windows' },
     @{ Id = 'settings'; Glyph = '⚙'; Title = 'НАСТРОЙКИ'; Sub = 'темы и мониторинг' }
 )
 
@@ -3324,7 +4758,7 @@ foreach ($grp in $script:Groups) {
     $b.Text   = $grp.Glyph + '  ' + $grp.Title
     $b.Sub    = $grp.Sub
     $b.Tag    = $grp.Id
-    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 42)), (S 186), (S 38))
+    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 186), (S 36))
     $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
@@ -3334,7 +4768,7 @@ foreach ($grp in $script:Groups) {
 $navBottom = New-Object System.Windows.Forms.Panel
 $script:NavBottomPanel = $navBottom
 $navBottom.Dock      = 'Bottom'
-$navBottom.Height    = S 120
+$navBottom.Height    = S 108
 $navBottom.BackColor = [RustSuite.Theme]::Bg
 
 $lblProfiles = New-Object System.Windows.Forms.Label
@@ -3342,19 +4776,19 @@ $lblProfiles.Text      = 'ПРОФИЛИ'
 $lblProfiles.Font      = [RustSuite.Theme]::FHead
 $lblProfiles.ForeColor = [RustSuite.Theme]::Muted
 $lblProfiles.BackColor = [RustSuite.Theme]::Bg
-$lblProfiles.Bounds    = New-Object System.Drawing.Rectangle 0, (S 2), (S 186), (S 18)
+$lblProfiles.Bounds    = New-Object System.Drawing.Rectangle 0, (S 0), (S 186), (S 18)
 
 $btnSafe = New-Object RustSuite.FlatButton
 $btnSafe.Style  = 'Ghost'
 $btnSafe.Text   = 'БЕЗОПАСНЫЙ'
 $btnSafe.Font   = [RustSuite.Theme]::FSmall
-$btnSafe.Bounds = New-Object System.Drawing.Rectangle 0, (S 24), (S 186), (S 32)
+$btnSafe.Bounds = New-Object System.Drawing.Rectangle 0, (S 20), (S 186), (S 30)
 
 $btnMax = New-Object RustSuite.FlatButton
 $btnMax.Style  = 'Ghost'
 $btnMax.Text   = 'МАКСИМУМ'
 $btnMax.Font   = [RustSuite.Theme]::FSmall
-$btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 62), (S 186), (S 32)
+$btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 56), (S 186), (S 30)
 
 $navBottom.Controls.AddRange(@($lblProfiles, $btnSafe, $btnMax))
 $nav.Controls.Add($navTop)
@@ -3368,7 +4802,7 @@ $rightCol.ColumnCount = 1
 $rightCol.RowCount    = 2
 $rightCol.BackColor   = [RustSuite.Theme]::PanelBg
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
-    [System.Windows.Forms.SizeType]::Absolute, (S 146))))
+    [System.Windows.Forms.SizeType]::Absolute, (S 168))))
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Percent, 100)))
 
@@ -3402,39 +4836,50 @@ function New-MetricLabel {
     return $l
 }
 
-$script:CpuVal = New-MetricLabel '—' (S 190) (S 34) (S 170) ([RustSuite.Theme]::TextC)
-$script:RamVal = New-MetricLabel '—' (S 190) (S 70) (S 170) ([RustSuite.Theme]::TextC)
-$script:RustState = New-MetricLabel '—' (S 60) (S 106) (S 300) ([RustSuite.Theme]::TextC)
-$script:CpuVal.TextAlign = 'MiddleRight'
-$script:RamVal.TextAlign = 'MiddleRight'
+$script:CpuVal = New-MetricLabel '—' (S 190) (S 30) (S 170) ([RustSuite.Theme]::TextC)
+$script:RamVal = New-MetricLabel '—' (S 190) (S 66) (S 170) ([RustSuite.Theme]::TextC)
+$script:DiskVal = New-MetricLabel '—' (S 190) (S 102) (S 170) ([RustSuite.Theme]::TextC)
+$script:RustState = New-MetricLabel '—' (S 60) (S 130) (S 300) ([RustSuite.Theme]::TextC)
+$script:CpuVal.TextAlign  = 'MiddleRight'
+$script:RamVal.TextAlign  = 'MiddleRight'
+$script:DiskVal.TextAlign = 'MiddleRight'
 
 $script:CpuBar = New-Object RustSuite.ProgressStrip
-$script:CpuBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 54), (S 340), (S 6)
+$script:CpuBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 50), (S 340), (S 6)
 $script:CpuBar.Shimmer   = $false
 $script:CpuBar.BackColor = [System.Drawing.Color]::Transparent
 
 $script:RamBar = New-Object RustSuite.ProgressStrip
-$script:RamBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 90), (S 340), (S 6)
+$script:RamBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 86), (S 340), (S 6)
 $script:RamBar.Shimmer   = $false
 $script:RamBar.BackColor = [System.Drawing.Color]::Transparent
 
+$script:DiskBar = New-Object RustSuite.ProgressStrip
+$script:DiskBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 122), (S 340), (S 6)
+$script:DiskBar.Shimmer   = $false
+$script:DiskBar.BackColor = [System.Drawing.Color]::Transparent
+
 $statsPanel.Controls.AddRange(@(
     $lblStats,
-    (New-MetricLabel 'CPU'  (S 14) (S 34) (S 80) ([RustSuite.Theme]::Muted)),
-    (New-MetricLabel 'ОЗУ'  (S 14) (S 70) (S 80) ([RustSuite.Theme]::Muted)),
-    (New-MetricLabel 'RUST' (S 14) (S 106) (S 46) ([RustSuite.Theme]::Muted)),
-    $script:CpuVal, $script:RamVal, $script:RustState,
-    $script:CpuBar, $script:RamBar
+    (New-MetricLabel 'CPU'  (S 14) (S 30) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'ОЗУ'  (S 14) (S 66) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'ДИСК' (S 14) (S 102) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'RUST' (S 14) (S 130) (S 46) ([RustSuite.Theme]::Muted)),
+    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState,
+    $script:CpuBar, $script:RamBar, $script:DiskBar
 ))
 
 $statsPanel.Add_Resize({
     $w = $statsPanel.ClientSize.Width
-    $script:CpuBar.Width = [Math]::Max((S 60), $w - (S 28))
-    $script:RamBar.Width = [Math]::Max((S 60), $w - (S 28))
-    $script:CpuVal.Left  = [Math]::Max((S 60), $w - (S 200))
-    $script:RamVal.Left  = $script:CpuVal.Left
-    $script:CpuVal.Width = [Math]::Max((S 80), $w - $script:CpuVal.Left - (S 14))
-    $script:RamVal.Width = $script:CpuVal.Width
+    $script:CpuBar.Width  = [Math]::Max((S 60), $w - (S 28))
+    $script:RamBar.Width  = [Math]::Max((S 60), $w - (S 28))
+    $script:DiskBar.Width = [Math]::Max((S 60), $w - (S 28))
+    $script:CpuVal.Left   = [Math]::Max((S 60), $w - (S 200))
+    $script:RamVal.Left   = $script:CpuVal.Left
+    $script:DiskVal.Left  = $script:CpuVal.Left
+    $script:CpuVal.Width  = [Math]::Max((S 80), $w - $script:CpuVal.Left - (S 14))
+    $script:RamVal.Width  = $script:CpuVal.Width
+    $script:DiskVal.Width = $script:CpuVal.Width
     $script:RustState.Width = [Math]::Max((S 100), $w - (S 74))
 })
 
@@ -3716,9 +5161,15 @@ function Show-Group {
     if (-not $gid) { $gid = 'sys' }
     $script:ActiveGroup = $gid
 
-    # Останавливаем таймер настроек, иначе он держит удалённые контролы.
+    # Останавливаем таймеры страниц, иначе они держат удалённые контролы.
     try {
         if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose(); $script:TempTimer = $null }
+    } catch {}
+    try {
+        if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose(); $script:ThemeTimer = $null }
+    } catch {}
+    try {
+        if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose(); $script:RepairScanTimer = $null }
     } catch {}
     $script:SetTempBox = $null
     $script:SetCpuBar  = $null
@@ -3738,6 +5189,7 @@ function Show-Group {
 
     try {
         if ($gid -eq 'binds') { Show-BindsPanel; return }
+        if ($gid -eq 'repair') { Show-RepairPanel; return }
         if ($gid -eq 'settings') { Show-SettingsPanel; return }
 
     $items = @($script:Tweaks | Where-Object { $_.Group -eq $gid })
@@ -3760,6 +5212,25 @@ function Show-Group {
     $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), $y, (S 420), (S 22)
     $script:RowHost.Controls.Add($head)
     $y += S 30
+
+    if ($gid -eq 'clean') {
+        $btnDeep = New-Object RustSuite.FlatButton
+        $btnDeep.Style  = 'Primary'
+        $btnDeep.Text   = '✦  ГЛУБОКАЯ ОЧИСТКА WINDOWS'
+        $btnDeep.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 44)
+        $btnDeep.Add_Click({ Start-DeepCleanFromUi })
+        $script:RowHost.Controls.Add($btnDeep)
+
+        $deepSub = New-Object System.Windows.Forms.Label
+        $deepSub.Text      = 'TEMP · кэш обновлений · дампы · кэш браузеров · логи Steam/RUST · эскизы'
+        $deepSub.Font      = [RustSuite.Theme]::FSmall
+        $deepSub.ForeColor = [RustSuite.Theme]::Muted
+        $deepSub.BackColor = [System.Drawing.Color]::Transparent
+        $deepSub.AutoSize  = $false
+        $deepSub.Bounds    = New-Object System.Drawing.Rectangle 0, ($y + (S 48)), $w, (S 16)
+        $script:RowHost.Controls.Add($deepSub)
+        $y += S 74
+    }
 
     $rh = S 80
     $idx = 0
@@ -3844,6 +5315,507 @@ $script:RowHost.Add_Resize({ Update-RowWidths })
 $script:RowHost.Add_ClientSizeChanged({
     Update-RowWidths
 })
+
+# ============================================================
+#  СТРАНИЦА «РЕМОНТ И ДИАГНОСТИКА»
+#  Проверки Windows + стандартные средства восстановления.
+# ============================================================
+
+$script:RepairReport   = $null
+$script:RepairReportAt = $null
+$script:RepairScanTimer = $null
+
+function Format-HealthReportFromCache {
+    $checks = @($script:RepairReport)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PURPLE RUSH · отчёт о здоровье Windows')
+    [void]$sb.AppendLine(('Дата: ' + $(if ($script:RepairReportAt) { $script:RepairReportAt.ToString('yyyy-MM-dd HH:mm:ss') } else { '—' })))
+    [void]$sb.AppendLine(('Версия: ' + $script:AppVersion))
+    [void]$sb.AppendLine('')
+    foreach ($c in $checks) {
+        $mark = switch ($c.Status) {
+            'ok'   { '[OK]  ' }
+            'warn' { '[!]   ' }
+            'err'  { '[ERR] ' }
+            default { '[i]   ' }
+        }
+        [void]$sb.AppendLine($mark + $c.Title + ': ' + $c.Detail)
+    }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Это стандартные проверки Windows, а не гарантия исправления любой ошибки.')
+    return $sb.ToString()
+}
+
+function Start-HealthScan {
+    if ($script:Busy) { return }
+    $oldCursor = $null
+    Set-Busy $true
+    try {
+        if ($script:RowHost -and -not $script:RowHost.IsDisposed) {
+            $oldCursor = $script:RowHost.Cursor
+            $script:RowHost.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        }
+        Set-ProgressValue 12
+        Set-Status 'Диагностика Windows: WMI, службы, диск, события…' '#FF8A4C'
+        Write-Log 'Диагностика Windows: сбор отчёта…' 'step'
+        Pump
+        $script:RepairReport = @(Get-SystemHealthReport)
+        $script:RepairReportAt = Get-Date
+        $warn = @($script:RepairReport | Where-Object { $_.Status -eq 'warn' -or $_.Status -eq 'err' }).Count
+        Set-ProgressValue 100
+        if ($warn -gt 0) {
+            Set-Status ('Диагностика готова: замечаний — ' + $warn) '#E3B341'
+            Write-Log ('Диагностика: проверок — ' + $script:RepairReport.Count + ', замечаний — ' + $warn) 'warn'
+        } else {
+            Set-Status 'Диагностика готова: критичных замечаний нет' '#4ECB71'
+            Write-Log ('Диагностика: проверок — ' + $script:RepairReport.Count + ', замечаний нет') 'ok'
+        }
+    } catch {
+        Write-Log ('Диагностика не удалась: ' + $_.Exception.Message) 'err'
+        Set-Status 'Диагностика завершилась с ошибкой — смотрите журнал' '#FF6B62'
+    } finally {
+        Set-Busy $false
+        Set-ProgressValue 0
+        if ($oldCursor -and $script:RowHost -and -not $script:RowHost.IsDisposed) {
+            $script:RowHost.Cursor = $oldCursor
+        }
+    }
+    # Show-Group очищает старые контролы, поэтому после сканирования
+    # страница перестраивается без наложения двух наборов строк.
+    if ($script:ActiveGroup -eq 'repair') { Show-Group 'repair' }
+}
+
+function Restart-PcFromUi {
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Перезагрузить ПК сейчас?`n`nНесохранённые файлы будут закрыты. Перезагрузка начнётся через 10 секунд."),
+        'PURPLE RUSH — ПЕРЕЗАГРУЗКА', 'YesNo', 'Warning')
+    if ($ans -ne 'Yes') { return }
+    try {
+        $shutdown = Join-Path $env:SystemRoot 'System32\shutdown.exe'
+        Start-Process -FilePath $shutdown `
+            -ArgumentList '/r /t 10 /f /c "PURPLE RUSH: перезагрузка после диагностики"' `
+            -WindowStyle Hidden -ErrorAction Stop | Out-Null
+        Write-Log 'Запланирована перезагрузка через 10 секунд' 'warn'
+        Set-Status 'Перезагрузка через 10 секунд…' '#FF8A4C'
+    } catch {
+        Write-Log ('Не удалось запланировать перезагрузку: ' + $_.Exception.Message) 'err'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Не удалось перезагрузить автоматически.`n`n" + $_.Exception.Message),
+            'PURPLE RUSH', 'OK', 'Error')
+    }
+}
+
+function Invoke-HealthFixFromUi {
+    param($Check)
+    if (-not $Check -or $script:Busy) { return }
+
+    if ($Check.Fix -eq 'cleanup') {
+        Show-Group 'clean'
+        Set-Status ('Рекомендация: ' + $Check.Title + ' — запустите глубокую очистку') '#E3B341'
+        Write-Log ('Диагностика рекомендует очистку: ' + $Check.Title) 'info'
+        return
+    }
+    if ($Check.Fix -eq 'reboot') { Restart-PcFromUi; return }
+
+    $confirm = switch ($Check.Fix) {
+        'wmi'     { 'Проверить и при необходимости восстановить репозиторий WMI?' }
+        'restore' { 'Создать точку восстановления системы сейчас?' }
+        'wu'      { 'Вернуть службы Windows Update в рабочий режим?' }
+        'time'    { 'Синхронизировать системное время с time.windows.com?' }
+        'drivers' { 'Запустить поиск изменений оборудования?' }
+        default   { '' }
+    }
+    if ($confirm) {
+        $a = [System.Windows.Forms.MessageBox]::Show($confirm, 'PURPLE RUSH — РЕМОНТ', 'YesNo', 'Question')
+        if ($a -ne 'Yes') { return }
+    }
+
+    Set-Busy $true
+    Set-ProgressValue 25
+    try {
+        switch ($Check.Fix) {
+            'time'    { Invoke-TimeResync }
+            'wu'      { Invoke-WindowsUpdateServicesFix }
+            'wmi'     { Invoke-WmiRepair }
+            'drivers' { Invoke-DriverRescan }
+            'restore' { Invoke-RestorePointNow }
+        }
+        Set-ProgressValue 100
+        Set-Status ('Готово: ' + $Check.Title) '#4ECB71'
+    } catch {
+        Write-Log ('Ремонт «' + $Check.Title + '»: ' + $_.Exception.Message) 'err'
+        Set-Status ('Ошибка ремонта: ' + $_.Exception.Message) '#FF6B62'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Не удалось выполнить: " + $Check.Title + "`n`n" + $_.Exception.Message + "`n`nЖурнал: " + $script:LogFile),
+            'PURPLE RUSH', 'OK', 'Warning')
+    } finally {
+        Set-Busy $false
+        Set-ProgressValue 0
+    }
+    if ($script:ActiveGroup -eq 'repair') { Start-HealthScan }
+}
+
+function Invoke-RepairToolFromUi {
+    param([string]$Key)
+    if (-not $Key -or $script:Busy) { return }
+
+    $tools = @{
+        sfc = @{
+            Label = 'SFC /scannow'
+            Confirm = "Проверить целостность системных файлов?`n`nSFC может занять 5–20 минут. Не закрывайте окно."
+            Notice = $true
+            Run = { Invoke-SfcScan }
+        }
+        dism = @{
+            Label = 'DISM RestoreHealth'
+            Confirm = "Восстановить образ Windows через DISM?`n`nНужен интернет, операция может занять 10–30 минут."
+            Notice = $true
+            Run = { Invoke-DismRestore }
+        }
+        dismclean = @{
+            Label = 'DISM ComponentCleanup'
+            Confirm = "Очистить хранилище компонентов WinSxS?`n`nWindows может работать медленнее до следующей перезагрузки."
+            Notice = $true
+            Run = { Invoke-DismComponentCleanup }
+        }
+        chkdsk = @{
+            Label = 'CHKDSK /scan'
+            Confirm = "Проверить системный диск онлайн?`n`nCHKDSK /scan работает без перезагрузки и может занять несколько минут."
+            Notice = $true
+            Run = { Invoke-ChkdskScan }
+        }
+        wureset = @{
+            Label = 'Сброс Windows Update'
+            Confirm = "Сбросить компоненты Windows Update?`n`nКэш обновлений будет пересоздан, после операции нужна перезагрузка."
+            Notice = $true
+            Run = { Invoke-WindowsUpdateReset }
+        }
+        netreset = @{
+            Label = 'Сброс сети'
+            Confirm = "Сбросить Winsock, TCP/IP и DNS?`n`nСеть может быть недоступна до перезагрузки."
+            Notice = $true
+            Run = { Invoke-NetworkReset }
+        }
+        wmi = @{
+            Label = 'Лечение WMI'
+            Confirm = "Проверить и при необходимости восстановить репозиторий WMI?"
+            Notice = $false
+            Run = { Invoke-WmiRepair }
+        }
+        store = @{
+            Label = 'Сброс Microsoft Store'
+            Confirm = "Очистить кэш Microsoft Store?"
+            Notice = $false
+            Run = { Invoke-StoreReset }
+        }
+        icons = @{
+            Label = 'Пересборка кэша иконок'
+            Confirm = "Пересобрать кэш иконок и эскизов?`n`nПроводник Windows будет перезапущен."
+            Notice = $false
+            Run = { Invoke-IconCacheRebuild }
+        }
+        time = @{
+            Label = 'Синхронизация времени'
+            Confirm = ''
+            Notice = $false
+            Run = { Invoke-TimeResync }
+        }
+        drivers = @{
+            Label = 'Пересканировать драйверы'
+            Confirm = "Запустить поиск изменений оборудования?"
+            Notice = $false
+            Run = { Invoke-DriverRescan }
+        }
+        spooler = @{
+            Label = 'Очередь печати'
+            Confirm = "Очистить очередь печати и перезапустить Spooler?"
+            Notice = $false
+            Run = { Invoke-SpoolerReset }
+        }
+        restore = @{
+            Label = 'Точка восстановления'
+            Confirm = "Создать точку восстановления системы сейчас?"
+            Notice = $true
+            Run = { Invoke-RestorePointNow }
+        }
+    }
+
+    $tool = $tools[$Key]
+    if (-not $tool) { return }
+    if ($tool.Confirm) {
+        $a = [System.Windows.Forms.MessageBox]::Show($tool.Confirm, 'PURPLE RUSH — РЕМОНТ', 'YesNo', 'Question')
+        if ($a -ne 'Yes') { return }
+    }
+
+    $oldCursor = $null
+    Set-Busy $true
+    try {
+        if ($script:RowHost -and -not $script:RowHost.IsDisposed) {
+            $oldCursor = $script:RowHost.Cursor
+            $script:RowHost.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        }
+        Set-ProgressValue 5
+        Set-Status ($tool.Label + ' · выполняется…') '#FF8A4C'
+        Write-Log ('Ремонт Windows: ' + $tool.Label) 'step'
+        Pump
+        $null = & $tool.Run
+        Set-ProgressValue 100
+        Set-Status ($tool.Label + ' · готово') '#4ECB71'
+        if ($tool.Notice) {
+            [void][System.Windows.Forms.MessageBox]::Show(
+                ($tool.Label + " — готово.`n`nПодробности в журнале:`n" + $script:LogFile),
+                'PURPLE RUSH — РЕМОНТ', 'OK', 'Information')
+        }
+    } catch {
+        Write-Log ($tool.Label + ': ' + $_.Exception.Message) 'err'
+        Set-Status ('Ошибка: ' + $_.Exception.Message) '#FF6B62'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ($tool.Label + "`n`n" + $_.Exception.Message + "`n`nЖурнал: " + $script:LogFile),
+            'PURPLE RUSH — РЕМОНТ', 'OK', 'Warning')
+    } finally {
+        Set-Busy $false
+        Set-ProgressValue 0
+        if ($oldCursor -and $script:RowHost -and -not $script:RowHost.IsDisposed) {
+            $script:RowHost.Cursor = $oldCursor
+        }
+    }
+    if ($script:ActiveGroup -eq 'repair') { Start-HealthScan }
+}
+
+function Show-RepairPanel {
+    try { if ($script:RepairTip) { $script:RepairTip.Dispose(); $script:RepairTip = $null } } catch {}
+    $w = $script:RowHost.ClientSize.Width - (S 22)
+    if ($w -lt (S 340)) { $w = (S 340) }
+
+    $accentBar = New-Object System.Windows.Forms.Panel
+    $accentBar.BackColor = [RustSuite.Theme]::Accent
+    $accentBar.Bounds    = New-Object System.Drawing.Rectangle 0, (S 5), (S 3), (S 15)
+    $script:RowHost.Controls.Add($accentBar)
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text      = 'РЕМОНТ И ДИАГНОСТИКА · WINDOWS'
+    $head.Font      = [RustSuite.Theme]::FHead
+    $head.ForeColor = [RustSuite.Theme]::TextC
+    $head.BackColor = [System.Drawing.Color]::Transparent
+    $head.AutoSize  = $false
+    $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), (S 2), (S 520), (S 22)
+    $script:RowHost.Controls.Add($head)
+
+    $sub = New-Object System.Windows.Forms.Label
+    $sub.Text      = 'Только штатные средства Windows: SFC, DISM, CHKDSK, WMI, службы и кэши. Сторонние бинарники не используются.'
+    $sub.Font      = [RustSuite.Theme]::FSmall
+    $sub.ForeColor = [RustSuite.Theme]::Muted
+    $sub.BackColor = [System.Drawing.Color]::Transparent
+    $sub.AutoSize  = $false
+    $sub.Bounds    = New-Object System.Drawing.Rectangle 0, (S 24), $w, (S 32)
+    $sub.Anchor    = 'Top,Left,Right'
+    $script:RowHost.Controls.Add($sub)
+
+    $btnScan = New-Object RustSuite.FlatButton
+    $btnScan.Style  = 'Primary'
+    $btnScan.Text   = '◈  ПРОВЕРИТЬ WINDOWS СЕЙЧАС'
+    $btnScan.Bounds = New-Object System.Drawing.Rectangle 0, (S 58), $w, (S 44)
+    $btnScan.Anchor = 'Top,Left,Right'
+    $btnScan.Add_Click({ Start-HealthScan })
+    $script:RowHost.Controls.Add($btnScan)
+
+    $half = [int](($w - (S 8)) / 2)
+    $btnFix = New-Object RustSuite.FlatButton
+    $btnFix.Style  = 'Ghost'
+    $btnFix.Text   = '⚡  БЫСТРОЕ ЛЕЧЕНИЕ'
+    $btnFix.Font   = [RustSuite.Theme]::FSmall
+    $btnFix.Bounds = New-Object System.Drawing.Rectangle 0, (S 110), $half, (S 32)
+    $btnFix.Add_Click({
+        if ($script:Busy) { return }
+        $a = [System.Windows.Forms.MessageBox]::Show(
+            "Исправить автоматически то, что можно: службы времени и Windows Update, WMI, драйверы?`n`nПродолжить?",
+            'PURPLE RUSH — БЫСТРОЕ ЛЕЧЕНИЕ', 'YesNo', 'Question')
+        if ($a -ne 'Yes') { return }
+        Set-Busy $true
+        Set-ProgressValue 10
+        try {
+            Write-Log 'Быстрое лечение Windows: старт' 'step'
+            Set-Status 'Быстрое лечение Windows…' '#FF8A4C'
+            Invoke-QuickHealthFix
+            Set-ProgressValue 100
+            Set-Status 'Быстрое лечение завершено — проверяю снова' '#4ECB71'
+        } catch {
+            Write-Log ('Быстрое лечение: ' + $_.Exception.Message) 'err'
+        } finally {
+            Set-Busy $false
+            Set-ProgressValue 0
+        }
+        Start-HealthScan
+    })
+    $script:RowHost.Controls.Add($btnFix)
+
+    $btnCopy = New-Object RustSuite.FlatButton
+    $btnCopy.Style  = 'Ghost'
+    $btnCopy.Text   = '⧉  КОПИРОВАТЬ ОТЧЁТ'
+    $btnCopy.Font   = [RustSuite.Theme]::FSmall
+    $btnCopy.Bounds = New-Object System.Drawing.Rectangle ($half + (S 8)), (S 110), ($w - $half - (S 8)), (S 32)
+    $btnCopy.Add_Click({
+        if ($null -eq $script:RepairReport) { Start-HealthScan }
+        if ($null -eq $script:RepairReport) { return }
+        $txt = Format-HealthReportFromCache
+        if (Copy-Text $txt) {
+            Set-Status 'Отчёт о здоровье Windows скопирован' '#4ECB71'
+            Write-Log 'Отчёт о здоровье Windows скопирован в буфер обмена' 'ok'
+        }
+    })
+    $script:RowHost.Controls.Add($btnCopy)
+
+    # ---------- Сводка ----------
+    $report = @()
+    if ($null -ne $script:RepairReport) { $report = @($script:RepairReport) }
+    $cntOk = 0; $cntWarn = 0; $cntErr = 0; $cntInfo = 0
+    foreach ($c in $report) {
+        switch ([string]$c.Status) {
+            'ok'   { $cntOk++ }
+            'warn' { $cntWarn++ }
+            'err'  { $cntErr++ }
+            default { $cntInfo++ }
+        }
+    }
+
+    $sumY = S 150
+    $sumW = [int]($w / 4)
+    $sums = @(
+        @{ T = ('✓  ' + $cntOk + ' ОК');        C = [RustSuite.Theme]::Ok },
+        @{ T = ('!  ' + $cntWarn + ' ВНИМАНИЕ'); C = [RustSuite.Theme]::Warn },
+        @{ T = ('✕  ' + $cntErr + ' ОШИБКА');    C = [RustSuite.Theme]::Err },
+        @{ T = ('i  ' + $cntInfo + ' ИНФО');     C = [RustSuite.Theme]::AccentLt }
+    )
+    for ($si = 0; $si -lt $sums.Count; $si++) {
+        $sl = New-Object System.Windows.Forms.Label
+        $sl.Text      = $sums[$si].T
+        $sl.Font      = [RustSuite.Theme]::FSub
+        $sl.ForeColor = $sums[$si].C
+        $sl.BackColor = [System.Drawing.Color]::Transparent
+        $sl.AutoSize  = $false
+        $sl.Bounds    = New-Object System.Drawing.Rectangle ($si * $sumW), $sumY, $sumW, (S 22)
+        $script:RowHost.Controls.Add($sl)
+    }
+
+    $when = if ($script:RepairReportAt) { $script:RepairReportAt.ToString('HH:mm:ss') } else { '—' }
+    $lblWhen = New-Object System.Windows.Forms.Label
+    $lblWhen.Text      = 'Обновлено: ' + $when
+    $lblWhen.Font      = [RustSuite.Theme]::FSmall
+    $lblWhen.ForeColor = [RustSuite.Theme]::Muted
+    $lblWhen.BackColor = [System.Drawing.Color]::Transparent
+    $lblWhen.AutoSize  = $false
+    $lblWhen.Bounds    = New-Object System.Drawing.Rectangle 0, ($sumY + (S 22)), $w, (S 16)
+    $lblWhen.Anchor    = 'Top,Left,Right'
+    $script:RowHost.Controls.Add($lblWhen)
+
+    # ---------- Строки проверок ----------
+    $y = S 196
+    if ($report.Count -eq 0) {
+        $hint = New-Object System.Windows.Forms.Label
+        $hint.Text      = "Отчёт ещё не собран.`r`nНажмите «ПРОВЕРИТЬ WINDOWS СЕЙЧАС» — проверка займёт несколько секунд."
+        $hint.Font      = [RustSuite.Theme]::FSub
+        $hint.ForeColor = [RustSuite.Theme]::Muted
+        $hint.BackColor = [System.Drawing.Color]::Transparent
+        $hint.AutoSize  = $false
+        $hint.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 52)
+        $hint.Anchor    = 'Top,Left,Right'
+        $script:RowHost.Controls.Add($hint)
+        $y += S 64
+    } else {
+        foreach ($c in $report) {
+            $row = New-Object RustSuite.HealthRow
+            $row.Title      = [string]$c.Title
+            $row.Detail     = [string]$c.Detail
+            $row.Status     = [string]$c.Status
+            $row.ActionText = [string]$c.FixLabel
+            $row.Tag        = $c
+            $row.Bounds     = New-Object System.Drawing.Rectangle 0, $y, $w, (S 58)
+            $row.Anchor     = 'Top,Left,Right'
+            $row.Add_ActionClicked({
+                param($s, $e)
+                Invoke-HealthFixFromUi $s.Tag
+            })
+            $script:RowHost.Controls.Add($row)
+            $y += S 64
+        }
+    }
+
+    # ---------- Инструменты ----------
+    $y += S 8
+    $lblTools = New-Object System.Windows.Forms.Label
+    $lblTools.Text      = 'ИНСТРУМЕНТЫ ВОССТАНОВЛЕНИЯ'
+    $lblTools.Font      = [RustSuite.Theme]::FHead
+    $lblTools.ForeColor = [RustSuite.Theme]::Muted
+    $lblTools.BackColor = [System.Drawing.Color]::Transparent
+    $lblTools.AutoSize  = $false
+    $lblTools.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblTools)
+    $y += S 24
+
+    $toolDefs = @(
+        @{ K='sfc';       T='SFC · СИСТЕМНЫЕ ФАЙЛЫ';      D='sfc /scannow: проверка и починка системных файлов.' },
+        @{ K='dism';      T='DISM · ВОССТАНОВЛЕНИЕ';        D='DISM /RestoreHealth: восстановление образа Windows.' },
+        @{ K='dismclean'; T='DISM · ЧИСТКА WINSXS';         D='StartComponentCleanup: безопасная очистка хранилища компонентов.' },
+        @{ K='chkdsk';    T='CHKDSK · ПРОВЕРКА ДИСКА';      D='chkdsk /scan: онлайн-проверка системного диска.' },
+        @{ K='wureset';   T='СБРОС WINDOWS UPDATE';         D='Остановка служб, пересоздание SoftwareDistribution и Catroot2.' },
+        @{ K='netreset';  T='СБРОС СЕТИ';                   D='netsh winsock reset + int ip reset + сброс DNS.' },
+        @{ K='wmi';       T='ЛЕЧЕНИЕ WMI';                  D='Проверка и восстановление репозитория WMI.' },
+        @{ K='store';     T='СБРОС MICROSOFT STORE';        D='wsreset: очистка кэша Store без удаления приложений.' },
+        @{ K='icons';     T='ПЕРЕСБОРКА КЭША ИКОНОК';       D='Очистка thumbcache/iconcache с перезапуском Explorer.' },
+        @{ K='time';      T='СИНХРОНИЗАЦИЯ ВРЕМЕНИ';        D='w32tm /resync: синхронизация с time.windows.com.' },
+        @{ K='drivers';   T='ПЕРЕСКАНИРОВАТЬ ДРАЙВЕРЫ';     D='pnputil /scan-devices: поиск изменений оборудования.' },
+        @{ K='spooler';   T='ОЧИСТИТЬ ОЧЕРЕДЬ ПЕЧАТИ';      D='Остановка Spooler, очистка PRINTERS, запуск службы.' }
+    )
+
+    $tip = New-Object System.Windows.Forms.ToolTip
+    $tip.AutoPopDelay = 12000
+    $tip.InitialDelay = 400
+    $tip.ReshowDelay = 100
+    $script:RepairTip = $tip
+
+    $tw = [int](($w - (S 8)) / 2)
+    for ($ti = 0; $ti -lt $toolDefs.Count; $ti++) {
+        $td = $toolDefs[$ti]
+        $tx = if ($ti % 2 -eq 0) { 0 } else { $tw + (S 8) }
+        $ty = $y + [int]([Math]::Floor($ti / 2) * (S 42))
+        $tb = New-Object RustSuite.FlatButton
+        $tb.Style  = 'Ghost'
+        $tb.Font   = [RustSuite.Theme]::FSmall
+        $tb.Text   = $td.T
+        $tb.Tag    = $td.K
+        $tb.Bounds = New-Object System.Drawing.Rectangle $tx, $ty, $tw, (S 34)
+        $tip.SetToolTip($tb, $td.D)
+        $tb.Add_Click({ param($s, $e) Invoke-RepairToolFromUi $s.Tag })
+        $script:RowHost.Controls.Add($tb)
+    }
+    $y += [int]([Math]::Ceiling($toolDefs.Count / 2) * (S 42)) + (S 4)
+
+    $btnRestore = New-Object RustSuite.FlatButton
+    $btnRestore.Style  = 'Primary'
+    $btnRestore.Text   = '◈  СОЗДАТЬ ТОЧКУ ВОССТАНОВЛЕНИЯ'
+    $btnRestore.Font   = [RustSuite.Theme]::FSmall
+    $btnRestore.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 38)
+    $btnRestore.Anchor = 'Top,Left,Right'
+    $btnRestore.Add_Click({ Invoke-RepairToolFromUi 'restore' })
+    $script:RowHost.Controls.Add($btnRestore)
+    $y += S 52
+
+    $note = New-Object System.Windows.Forms.Label
+    $note.Text = 'SFC, DISM и CHKDSK могут работать 10–30 минут — это нормально, окно закрывать не нужно. ' +
+                 'Перед основной оптимизацией точка восстановления создаётся автоматически, для ремонта её можно создать кнопкой выше. ' +
+                 'Если проблема не ушла, откройте журнал: ProgramData\RustOptimizer. Это диагностика стандартными средствами, ' +
+                 'а не «починка всего» одной кнопкой.'
+    $note.Font      = [RustSuite.Theme]::FSmall
+    $note.ForeColor = [RustSuite.Theme]::Muted
+    $note.BackColor = [System.Drawing.Color]::Transparent
+    $note.AutoSize  = $false
+    $note.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 72)
+    $note.Anchor    = 'Top,Left,Right'
+    $script:RowHost.Controls.Add($note)
+    $y += S 84
+
+    $script:RowHost.AutoScrollMinSize = New-Object System.Drawing.Size 0, $y
+}
 
 # ============================================================
 #  ДЕЙСТВИЯ И ТАЙМЕРЫ
@@ -3993,6 +5965,39 @@ function Rust-OneClickFromUi {
     [void][System.Windows.Forms.MessageBox]::Show($res, 'PURPLE RUSH', 'OK', 'Information')
 }
 
+function Start-DeepCleanFromUi {
+    if ($script:Busy) { return }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Глубокая очистка Windows:`n`n· TEMP и Windows Temp`n· кэш обновлений Windows`n· дампы и отчёты об ошибках`n· кэш браузеров (без паролей и истории)`n· логи Steam / RUST`n· кэш эскизов и иконок`n`nЗакройте браузеры и игры. Продолжить?"),
+        'PURPLE RUSH — ГЛУБОКАЯ ОЧИСТКА', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+
+    Set-Busy $true
+    Set-ProgressValue 0
+    try {
+        Write-Log 'Глубокая очистка Windows: старт' 'step'
+        Set-Status 'Глубокая очистка Windows…' '#FF8A4C'
+        Invoke-DeepClean
+        Set-ProgressValue 100
+        $mb  = [math]::Round($script:CleanBytes / 1MB, 1)
+        $obj = $script:CleanObjects
+        Set-Status ('Очистка готова: {0:N1} МБ' -f $mb) '#4ECB71'
+        Write-Log ('Глубокая очистка: освобождено {0:N1} МБ' -f $mb) 'ok'
+        Update-Stats
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Освобождено: {0:N1} МБ`nУдалено объектов: {1:N0}`n`nПароли, история браузеров, cfg RUST и сохранения не затронуты." -f $mb, $obj),
+            'PURPLE RUSH — ГОТОВО', 'OK', 'Information')
+    } catch {
+        Write-Log ('Глубокая очистка: ' + $_.Exception.Message) 'err'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Очистка прервана: " + $_.Exception.Message + "`n`nЖурнал: " + $script:LogFile),
+            'PURPLE RUSH', 'OK', 'Warning')
+    } finally {
+        Set-Busy $false
+        Set-ProgressValue 0
+    }
+}
+
 function Update-Stats {
     $cpu = -1
     $ram = -1
@@ -4051,6 +6056,30 @@ function Update-Stats {
         }
     }
 
+    $diskUsed = -1
+    $diskFreeGb = 0.0
+    $diskFreePct = 0.0
+    try {
+        $di = New-Object System.IO.DriveInfo($env:SystemDrive)
+        if ($di.IsReady -and $di.TotalSize -gt 0) {
+            $diskFreePct = ($di.AvailableFreeSpace / [double]$di.TotalSize) * 100.0
+            $diskUsed = [int][Math]::Round(100.0 - $diskFreePct)
+            $diskFreeGb = [math]::Round($di.AvailableFreeSpace / 1GB, 1)
+        }
+    } catch {}
+    if ($script:DiskBar -and -not $script:DiskBar.IsDisposed) {
+        if ($diskUsed -ge 0) {
+            $script:DiskBar.Value = $diskUsed
+            $script:DiskVal.Text  = ('{0:N1} ГБ' -f $diskFreeGb)
+            $script:DiskVal.ForeColor = if ($diskFreePct -lt 8) { [RustSuite.Theme]::Err }
+                                        elseif ($diskFreePct -lt 15) { [RustSuite.Theme]::Warn }
+                                        else { [RustSuite.Theme]::TextC }
+        } else {
+            $script:DiskBar.Value = 0
+            $script:DiskVal.Text  = 'н/д'
+        }
+    }
+
     $script:RustRunning = Test-RustRunning
     if ($script:RustState -and -not $script:RustState.IsDisposed) {
         if (-not $script:RustExe) {
@@ -4079,6 +6108,27 @@ $script:LaunchTimer.Add_Tick({
         Set-Status 'RUST запущен, оптимизация применена' '#4ECB71'
         $script:LaunchTimer.Stop()
         Update-Stats
+
+        # Автозакрытие: даём увидеть статус и закрываем оптимизатор.
+        if ($script:AutoClose -and $script:MainForm -and -not $script:MainForm.IsDisposed) {
+            Set-Status 'RUST запущен — закрываю оптимизатор…' '#4ECB71'
+            Write-Log 'Автозакрытие оптимизатора через 2 секунды' 'info'
+            try {
+                if ($script:CloseTimer) { $script:CloseTimer.Stop(); $script:CloseTimer.Dispose() }
+                $script:CloseTimer = New-Object System.Windows.Forms.Timer
+                $script:CloseTimer.Interval = 2000
+                $script:CloseTimer.Add_Tick({
+                    try { $script:CloseTimer.Stop(); $script:CloseTimer.Dispose() } catch {}
+                    $script:CloseTimer = $null
+                    if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+                        $script:MainForm.Close()
+                    }
+                })
+                $script:CloseTimer.Start()
+            } catch {
+                Write-Log ('Автозакрытие недоступно: ' + $_.Exception.Message) 'warn'
+            }
+        }
     } else {
         $script:LaunchTries--
         if ($script:LaunchTries -le 0) {
@@ -4222,16 +6272,23 @@ $btnUndo.Add_Click({
     }
 })
 
+$btnScan.Add_Click({
+    if ($script:Busy) { return }
+    Show-Group 'repair'
+    Start-HealthScan
+})
+
 # ---------- Жизненный цикл ----------
 $form.Add_FormClosing({
     param($s, $e)
-    if ($script:Busy) {
+    if ($script:Busy -and -not $script:TestUi) {
         $a = [System.Windows.Forms.MessageBox]::Show(
             'Оптимизация ещё выполняется. Прервать?', 'PURPLE RUSH', 'YesNo', 'Warning')
         if ($a -ne 'Yes') { $e.Cancel = $true; return }
     }
     try { $script:StatsTimer.Stop() } catch {}
     try { $script:LaunchTimer.Stop() } catch {}
+    try { if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose() } } catch {}
     if ($script:State['TimerOn']) { try { [RustSuite.Native]::TimerStop() } catch {} }
 })
 
@@ -4261,9 +6318,11 @@ $form.Add_Shown({
 
     if ($script:TestUi) {
         $script:ProbeStep = 0
+        $script:ProbeHold = $false
         $script:ProbeTimer = New-Object System.Windows.Forms.Timer
         $script:ProbeTimer.Interval = 450
         $script:ProbeTimer.Add_Tick({
+            if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
                     0 { Show-Group 'sys' }
@@ -4272,24 +6331,38 @@ $form.Add_Shown({
                     3 { Show-Group 'binds' }
                     4 { Show-Group 'clean' }
                     5 {
-                        Show-Group 'settings'
+                        Show-Group 'repair'
+                        if ($script:RepairReport) { Write-Host ('REPAIR ROWS: ' + @($script:RepairReport).Count) }
                     }
                     6 {
-                        Apply-Theme 'ТЁМНО-СИНЯЯ' -Save
+                        Show-Group 'repair'
+                        $script:ProbeHold = $true
+                        try { Start-HealthScan } finally { $script:ProbeHold = $false }
+                        Write-Host ('HEALTH ROWS: ' + @($script:RepairReport).Count)
+                    }
+                    7 {
+                        Show-Group 'settings'
+                        Apply-Theme 'MIDNIGHT' -Save
                         Update-ThemeSurfaces
                         Restart-SettingsSoon
                     }
-                    7 {
+                    8 {
                         Show-Group 'sys'
                         $c = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] }) | Select-Object -First 1
                         if ($c) { $c.On = (-not $c.On); $c.On = (-not $c.On) }
                         Update-Stats
                     }
-                    8 {
-                        Apply-Theme 'ПУРПУРНАЯ' -Save
+                    9 {
+                        Show-Group 'repair'
+                        Apply-Theme 'SAKURA' -Save
+                        Update-ThemeSurfaces
+                    }
+                    10 {
+                        Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'
                         $script:ProbeTimer.Stop()
+                        $script:Busy = $false
                         $form.Close()
                     }
                 }

@@ -33,6 +33,14 @@ $form.Size        = New-Object System.Drawing.Size $winW, $winH
 $form.MinimumSize = New-Object System.Drawing.Size (S 1000), (S 640)
 $form.Font        = [RustSuite.Theme]::FSub
 
+# Handle создаётся выше для чтения DPI, поэтому CenterScreen успевает
+# примениться к размеру по умолчанию. Позиционируем окно вручную уже
+# после установки финального размера — иначе часть окна уходит за экран.
+$px = $area.Left + [int][Math]::Max(0, (($area.Width - $winW) / 2))
+$py = $area.Top  + [int][Math]::Max(0, (($area.Height - $winH) / 2))
+$form.StartPosition = 'Manual'
+$form.Location = New-Object System.Drawing.Point $px, $py
+
 # Включаем двойную буферизацию контейнеров: меньше мерцания при перерисовке.
 function Enable-DoubleBuffer {
     param($Control)
@@ -112,19 +120,24 @@ $footer.Add_Paint({
 $btnRun = New-Object RustSuite.FlatButton
 $btnRun.Style   = 'Primary'
 $btnRun.Text    = '▶  ОПТИМИЗИРОВАТЬ ПК'
-$btnRun.Bounds  = New-Object System.Drawing.Rectangle (S 26), (S 22), (S 300), (S 50)
+$btnRun.Bounds  = New-Object System.Drawing.Rectangle (S 26), (S 22), (S 286), (S 50)
 
 $btnUndo = New-Object RustSuite.FlatButton
 $btnUndo.Style  = 'Ghost'
 $btnUndo.Text   = '↺  ОТКАТ'
-$btnUndo.Bounds = New-Object System.Drawing.Rectangle (S 338), (S 22), (S 150), (S 50)
+$btnUndo.Bounds = New-Object System.Drawing.Rectangle (S 320), (S 22), (S 132), (S 50)
+
+$btnScan = New-Object RustSuite.FlatButton
+$btnScan.Style  = 'Ghost'
+$btnScan.Text   = '◈  ДИАГНОСТИКА'
+$btnScan.Bounds = New-Object System.Drawing.Rectangle (S 460), (S 22), (S 158), (S 50)
 
 $script:Spinner = New-Object RustSuite.Spinner
-$script:Spinner.Bounds = New-Object System.Drawing.Rectangle (S 506), (S 26), (S 20), (S 20)
+$script:Spinner.Bounds = New-Object System.Drawing.Rectangle (S 628), (S 26), (S 20), (S 20)
 $script:Spinner.BackColor = [System.Drawing.Color]::Transparent
 
 $script:Progress = New-Object RustSuite.ProgressStrip
-$script:Progress.Bounds = New-Object System.Drawing.Rectangle (S 538), (S 30), (S 500), (S 7)
+$script:Progress.Bounds = New-Object System.Drawing.Rectangle (S 660), (S 30), (S 460), (S 7)
 $script:Progress.BackColor = [System.Drawing.Color]::Transparent
 
 $script:Status = New-Object System.Windows.Forms.Label
@@ -133,16 +146,16 @@ $script:Status.ForeColor = [RustSuite.Theme]::Muted
 $script:Status.BackColor = [System.Drawing.Color]::Transparent
 $script:Status.Font      = [RustSuite.Theme]::FSmall
 $script:Status.AutoSize  = $false
-$script:Status.Bounds    = New-Object System.Drawing.Rectangle (S 538), (S 48), (S 500), (S 20)
+$script:Status.Bounds    = New-Object System.Drawing.Rectangle (S 660), (S 48), (S 460), (S 20)
 
-$footer.Controls.AddRange(@($btnRun, $btnUndo, $script:Spinner, $script:Progress, $script:Status))
+$footer.Controls.AddRange(@($btnRun, $btnUndo, $btnScan, $script:Spinner, $script:Progress, $script:Status))
 
 $footer.Add_Resize({
     $w = $footer.ClientSize.Width
-    $x = (S 538)
-    if ($w - $x - (S 26) -lt (S 120)) { $x = (S 506) + (S 34) }
+    $x = (S 660)
+    if ($w - $x - (S 26) -lt (S 140)) { $x = (S 628) + (S 34) }
     $script:Progress.Left  = $x
-    $script:Progress.Width = [Math]::Max((S 120), $w - $x - (S 26))
+    $script:Progress.Width = [Math]::Max((S 140), $w - $x - (S 26))
     $script:Status.Left    = $x
     $script:Status.Width   = $script:Progress.Width
 })
@@ -178,7 +191,7 @@ $nav.BackColor = [RustSuite.Theme]::Bg
 $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock      = 'Top'
-$navTop.Height    = S 278
+$navTop.Height    = S 286
 $navTop.BackColor = [RustSuite.Theme]::Bg
 
 $script:Groups = @(
@@ -187,6 +200,7 @@ $script:Groups = @(
     @{ Id = 'rust';  Glyph = '▶'; Title = 'RUST';    Sub = 'профиль игры' },
     @{ Id = 'binds'; Glyph = '⌨'; Title = 'БИНДЫ';   Sub = 'keys.cfg одной кнопкой' },
     @{ Id = 'clean'; Glyph = '✦'; Title = 'ОЧИСТКА'; Sub = 'мусор и фоновые' },
+    @{ Id = 'repair'; Glyph = '◈'; Title = 'РЕМОНТ'; Sub = 'проверка и лечение Windows' },
     @{ Id = 'settings'; Glyph = '⚙'; Title = 'НАСТРОЙКИ'; Sub = 'темы и мониторинг' }
 )
 
@@ -196,7 +210,7 @@ foreach ($grp in $script:Groups) {
     $b.Text   = $grp.Glyph + '  ' + $grp.Title
     $b.Sub    = $grp.Sub
     $b.Tag    = $grp.Id
-    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 42)), (S 186), (S 38))
+    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 186), (S 36))
     $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
@@ -206,7 +220,7 @@ foreach ($grp in $script:Groups) {
 $navBottom = New-Object System.Windows.Forms.Panel
 $script:NavBottomPanel = $navBottom
 $navBottom.Dock      = 'Bottom'
-$navBottom.Height    = S 120
+$navBottom.Height    = S 108
 $navBottom.BackColor = [RustSuite.Theme]::Bg
 
 $lblProfiles = New-Object System.Windows.Forms.Label
@@ -214,19 +228,19 @@ $lblProfiles.Text      = 'ПРОФИЛИ'
 $lblProfiles.Font      = [RustSuite.Theme]::FHead
 $lblProfiles.ForeColor = [RustSuite.Theme]::Muted
 $lblProfiles.BackColor = [RustSuite.Theme]::Bg
-$lblProfiles.Bounds    = New-Object System.Drawing.Rectangle 0, (S 2), (S 186), (S 18)
+$lblProfiles.Bounds    = New-Object System.Drawing.Rectangle 0, (S 0), (S 186), (S 18)
 
 $btnSafe = New-Object RustSuite.FlatButton
 $btnSafe.Style  = 'Ghost'
 $btnSafe.Text   = 'БЕЗОПАСНЫЙ'
 $btnSafe.Font   = [RustSuite.Theme]::FSmall
-$btnSafe.Bounds = New-Object System.Drawing.Rectangle 0, (S 24), (S 186), (S 32)
+$btnSafe.Bounds = New-Object System.Drawing.Rectangle 0, (S 20), (S 186), (S 30)
 
 $btnMax = New-Object RustSuite.FlatButton
 $btnMax.Style  = 'Ghost'
 $btnMax.Text   = 'МАКСИМУМ'
 $btnMax.Font   = [RustSuite.Theme]::FSmall
-$btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 62), (S 186), (S 32)
+$btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 56), (S 186), (S 30)
 
 $navBottom.Controls.AddRange(@($lblProfiles, $btnSafe, $btnMax))
 $nav.Controls.Add($navTop)
@@ -240,7 +254,7 @@ $rightCol.ColumnCount = 1
 $rightCol.RowCount    = 2
 $rightCol.BackColor   = [RustSuite.Theme]::PanelBg
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
-    [System.Windows.Forms.SizeType]::Absolute, (S 146))))
+    [System.Windows.Forms.SizeType]::Absolute, (S 168))))
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Percent, 100)))
 
@@ -274,39 +288,50 @@ function New-MetricLabel {
     return $l
 }
 
-$script:CpuVal = New-MetricLabel '—' (S 190) (S 34) (S 170) ([RustSuite.Theme]::TextC)
-$script:RamVal = New-MetricLabel '—' (S 190) (S 70) (S 170) ([RustSuite.Theme]::TextC)
-$script:RustState = New-MetricLabel '—' (S 60) (S 106) (S 300) ([RustSuite.Theme]::TextC)
-$script:CpuVal.TextAlign = 'MiddleRight'
-$script:RamVal.TextAlign = 'MiddleRight'
+$script:CpuVal = New-MetricLabel '—' (S 190) (S 30) (S 170) ([RustSuite.Theme]::TextC)
+$script:RamVal = New-MetricLabel '—' (S 190) (S 66) (S 170) ([RustSuite.Theme]::TextC)
+$script:DiskVal = New-MetricLabel '—' (S 190) (S 102) (S 170) ([RustSuite.Theme]::TextC)
+$script:RustState = New-MetricLabel '—' (S 60) (S 130) (S 300) ([RustSuite.Theme]::TextC)
+$script:CpuVal.TextAlign  = 'MiddleRight'
+$script:RamVal.TextAlign  = 'MiddleRight'
+$script:DiskVal.TextAlign = 'MiddleRight'
 
 $script:CpuBar = New-Object RustSuite.ProgressStrip
-$script:CpuBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 54), (S 340), (S 6)
+$script:CpuBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 50), (S 340), (S 6)
 $script:CpuBar.Shimmer   = $false
 $script:CpuBar.BackColor = [System.Drawing.Color]::Transparent
 
 $script:RamBar = New-Object RustSuite.ProgressStrip
-$script:RamBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 90), (S 340), (S 6)
+$script:RamBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 86), (S 340), (S 6)
 $script:RamBar.Shimmer   = $false
 $script:RamBar.BackColor = [System.Drawing.Color]::Transparent
 
+$script:DiskBar = New-Object RustSuite.ProgressStrip
+$script:DiskBar.Bounds    = New-Object System.Drawing.Rectangle (S 14), (S 122), (S 340), (S 6)
+$script:DiskBar.Shimmer   = $false
+$script:DiskBar.BackColor = [System.Drawing.Color]::Transparent
+
 $statsPanel.Controls.AddRange(@(
     $lblStats,
-    (New-MetricLabel 'CPU'  (S 14) (S 34) (S 80) ([RustSuite.Theme]::Muted)),
-    (New-MetricLabel 'ОЗУ'  (S 14) (S 70) (S 80) ([RustSuite.Theme]::Muted)),
-    (New-MetricLabel 'RUST' (S 14) (S 106) (S 46) ([RustSuite.Theme]::Muted)),
-    $script:CpuVal, $script:RamVal, $script:RustState,
-    $script:CpuBar, $script:RamBar
+    (New-MetricLabel 'CPU'  (S 14) (S 30) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'ОЗУ'  (S 14) (S 66) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'ДИСК' (S 14) (S 102) (S 80) ([RustSuite.Theme]::Muted)),
+    (New-MetricLabel 'RUST' (S 14) (S 130) (S 46) ([RustSuite.Theme]::Muted)),
+    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState,
+    $script:CpuBar, $script:RamBar, $script:DiskBar
 ))
 
 $statsPanel.Add_Resize({
     $w = $statsPanel.ClientSize.Width
-    $script:CpuBar.Width = [Math]::Max((S 60), $w - (S 28))
-    $script:RamBar.Width = [Math]::Max((S 60), $w - (S 28))
-    $script:CpuVal.Left  = [Math]::Max((S 60), $w - (S 200))
-    $script:RamVal.Left  = $script:CpuVal.Left
-    $script:CpuVal.Width = [Math]::Max((S 80), $w - $script:CpuVal.Left - (S 14))
-    $script:RamVal.Width = $script:CpuVal.Width
+    $script:CpuBar.Width  = [Math]::Max((S 60), $w - (S 28))
+    $script:RamBar.Width  = [Math]::Max((S 60), $w - (S 28))
+    $script:DiskBar.Width = [Math]::Max((S 60), $w - (S 28))
+    $script:CpuVal.Left   = [Math]::Max((S 60), $w - (S 200))
+    $script:RamVal.Left   = $script:CpuVal.Left
+    $script:DiskVal.Left  = $script:CpuVal.Left
+    $script:CpuVal.Width  = [Math]::Max((S 80), $w - $script:CpuVal.Left - (S 14))
+    $script:RamVal.Width  = $script:CpuVal.Width
+    $script:DiskVal.Width = $script:CpuVal.Width
     $script:RustState.Width = [Math]::Max((S 100), $w - (S 74))
 })
 
@@ -588,9 +613,15 @@ function Show-Group {
     if (-not $gid) { $gid = 'sys' }
     $script:ActiveGroup = $gid
 
-    # Останавливаем таймер настроек, иначе он держит удалённые контролы.
+    # Останавливаем таймеры страниц, иначе они держат удалённые контролы.
     try {
         if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose(); $script:TempTimer = $null }
+    } catch {}
+    try {
+        if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose(); $script:ThemeTimer = $null }
+    } catch {}
+    try {
+        if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose(); $script:RepairScanTimer = $null }
     } catch {}
     $script:SetTempBox = $null
     $script:SetCpuBar  = $null
@@ -610,6 +641,7 @@ function Show-Group {
 
     try {
         if ($gid -eq 'binds') { Show-BindsPanel; return }
+        if ($gid -eq 'repair') { Show-RepairPanel; return }
         if ($gid -eq 'settings') { Show-SettingsPanel; return }
 
     $items = @($script:Tweaks | Where-Object { $_.Group -eq $gid })
@@ -632,6 +664,25 @@ function Show-Group {
     $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), $y, (S 420), (S 22)
     $script:RowHost.Controls.Add($head)
     $y += S 30
+
+    if ($gid -eq 'clean') {
+        $btnDeep = New-Object RustSuite.FlatButton
+        $btnDeep.Style  = 'Primary'
+        $btnDeep.Text   = '✦  ГЛУБОКАЯ ОЧИСТКА WINDOWS'
+        $btnDeep.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 44)
+        $btnDeep.Add_Click({ Start-DeepCleanFromUi })
+        $script:RowHost.Controls.Add($btnDeep)
+
+        $deepSub = New-Object System.Windows.Forms.Label
+        $deepSub.Text      = 'TEMP · кэш обновлений · дампы · кэш браузеров · логи Steam/RUST · эскизы'
+        $deepSub.Font      = [RustSuite.Theme]::FSmall
+        $deepSub.ForeColor = [RustSuite.Theme]::Muted
+        $deepSub.BackColor = [System.Drawing.Color]::Transparent
+        $deepSub.AutoSize  = $false
+        $deepSub.Bounds    = New-Object System.Drawing.Rectangle 0, ($y + (S 48)), $w, (S 16)
+        $script:RowHost.Controls.Add($deepSub)
+        $y += S 74
+    }
 
     $rh = S 80
     $idx = 0

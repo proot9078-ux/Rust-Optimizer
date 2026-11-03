@@ -7,13 +7,19 @@ function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 # ---------- Палитры ----------
 $script:Themes = @(
-    @{ Name='ПУРПУРНАЯ';  Bg=[System.Drawing.Color]::FromArgb(18,10,28);  Panel=[System.Drawing.Color]::FromArgb(28,15,42);  Card=[System.Drawing.Color]::FromArgb(36,20,58);  CardHover=[System.Drawing.Color]::FromArgb(48,28,72);  Border=[System.Drawing.Color]::FromArgb(70,45,110);  Accent=[System.Drawing.Color]::FromArgb(160,60,220);  AccentLt=[System.Drawing.Color]::FromArgb(200,100,255); TextC=[System.Drawing.Color]::FromArgb(245,240,255); Muted=[System.Drawing.Color]::FromArgb(170,150,190); Ok=[System.Drawing.Color]::FromArgb(120,200,120); Warn=[System.Drawing.Color]::FromArgb(240,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,14,38) },
-    @{ Name='ТЁМНО-СИНЯЯ'; Bg=[System.Drawing.Color]::FromArgb(10,14,26); Panel=[System.Drawing.Color]::FromArgb(16,20,36); Card=[System.Drawing.Color]::FromArgb(22,26,48); CardHover=[System.Drawing.Color]::FromArgb(30,36,60); Border=[System.Drawing.Color]::FromArgb(50,60,100); Accent=[System.Drawing.Color]::FromArgb(60,120,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,160,255); TextC=[System.Drawing.Color]::FromArgb(230,235,245); Muted=[System.Drawing.Color]::FromArgb(140,150,170); Ok=[System.Drawing.Color]::FromArgb(80,220,130);  Warn=[System.Drawing.Color]::FromArgb(250,190,50);   Err=[System.Drawing.Color]::FromArgb(255,90,110);  Field=[System.Drawing.Color]::FromArgb(14,16,30) },
-    @{ Name='ИЗУМРУДНАЯ';  Bg=[System.Drawing.Color]::FromArgb(10,20,14); Panel=[System.Drawing.Color]::FromArgb(15,28,20); Card=[System.Drawing.Color]::FromArgb(20,36,28); CardHover=[System.Drawing.Color]::FromArgb(28,48,36); Border=[System.Drawing.Color]::FromArgb(60,100,70);  Accent=[System.Drawing.Color]::FromArgb(60,220,100); AccentLt=[System.Drawing.Color]::FromArgb(100,255,150); TextC=[System.Drawing.Color]::FromArgb(240,245,235); Muted=[System.Drawing.Color]::FromArgb(160,175,160); Ok=[System.Drawing.Color]::FromArgb(100,240,120); Warn=[System.Drawing.Color]::FromArgb(240,210,60);   Err=[System.Drawing.Color]::FromArgb(240,100,110); Field=[System.Drawing.Color]::FromArgb(12,18,14) },
-    @{ Name='КРИМСОН';     Bg=[System.Drawing.Color]::FromArgb(26,10,14); Panel=[System.Drawing.Color]::FromArgb(36,15,22); Card=[System.Drawing.Color]::FromArgb(48,22,30); CardHover=[System.Drawing.Color]::FromArgb(60,30,42); Border=[System.Drawing.Color]::FromArgb(110,45,70); Accent=[System.Drawing.Color]::FromArgb(255,60,90);  AccentLt=[System.Drawing.Color]::FromArgb(255,120,140); TextC=[System.Drawing.Color]::FromArgb(245,230,235); Muted=[System.Drawing.Color]::FromArgb(180,140,160); Ok=[System.Drawing.Color]::FromArgb(100,220,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(30,12,16) }
+    @{ Name='PURPLE RUSH'; Bg=[System.Drawing.Color]::FromArgb(18,10,28);  Panel=[System.Drawing.Color]::FromArgb(28,15,42);  Card=[System.Drawing.Color]::FromArgb(36,20,58);  CardHover=[System.Drawing.Color]::FromArgb(48,28,72);  Border=[System.Drawing.Color]::FromArgb(70,45,110);  Accent=[System.Drawing.Color]::FromArgb(160,60,220);  AccentLt=[System.Drawing.Color]::FromArgb(200,100,255); Secondary=[System.Drawing.Color]::FromArgb(255,79,216); Glow=[System.Drawing.Color]::FromArgb(106,31,176); TextC=[System.Drawing.Color]::FromArgb(245,240,255); Muted=[System.Drawing.Color]::FromArgb(170,150,190); Ok=[System.Drawing.Color]::FromArgb(120,200,120); Warn=[System.Drawing.Color]::FromArgb(240,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,14,38) },
+    @{ Name='MIDNIGHT';    Bg=[System.Drawing.Color]::FromArgb(10,14,26); Panel=[System.Drawing.Color]::FromArgb(16,20,36); Card=[System.Drawing.Color]::FromArgb(22,30,48); CardHover=[System.Drawing.Color]::FromArgb(30,40,60); Border=[System.Drawing.Color]::FromArgb(50,64,100); Accent=[System.Drawing.Color]::FromArgb(60,120,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,160,255); Secondary=[System.Drawing.Color]::FromArgb(0,212,255); Glow=[System.Drawing.Color]::FromArgb(30,80,176); TextC=[System.Drawing.Color]::FromArgb(230,235,245); Muted=[System.Drawing.Color]::FromArgb(140,150,170); Ok=[System.Drawing.Color]::FromArgb(80,220,130);  Warn=[System.Drawing.Color]::FromArgb(250,190,50);   Err=[System.Drawing.Color]::FromArgb(255,90,110);  Field=[System.Drawing.Color]::FromArgb(14,16,30) },
+    @{ Name='EMERALD';     Bg=[System.Drawing.Color]::FromArgb(10,20,14); Panel=[System.Drawing.Color]::FromArgb(15,28,20); Card=[System.Drawing.Color]::FromArgb(20,36,28); CardHover=[System.Drawing.Color]::FromArgb(28,48,36); Border=[System.Drawing.Color]::FromArgb(60,100,70);  Accent=[System.Drawing.Color]::FromArgb(60,220,100); AccentLt=[System.Drawing.Color]::FromArgb(100,255,150); Secondary=[System.Drawing.Color]::FromArgb(0,255,176); Glow=[System.Drawing.Color]::FromArgb(30,140,70); TextC=[System.Drawing.Color]::FromArgb(240,245,235); Muted=[System.Drawing.Color]::FromArgb(160,175,160); Ok=[System.Drawing.Color]::FromArgb(100,240,120); Warn=[System.Drawing.Color]::FromArgb(240,210,60);   Err=[System.Drawing.Color]::FromArgb(240,100,110); Field=[System.Drawing.Color]::FromArgb(12,18,14) },
+    @{ Name='CRIMSON';     Bg=[System.Drawing.Color]::FromArgb(26,10,14); Panel=[System.Drawing.Color]::FromArgb(36,15,22); Card=[System.Drawing.Color]::FromArgb(48,22,30); CardHover=[System.Drawing.Color]::FromArgb(60,30,42); Border=[System.Drawing.Color]::FromArgb(110,45,70); Accent=[System.Drawing.Color]::FromArgb(255,60,90);  AccentLt=[System.Drawing.Color]::FromArgb(255,120,140); Secondary=[System.Drawing.Color]::FromArgb(255,154,60); Glow=[System.Drawing.Color]::FromArgb(176,30,60); TextC=[System.Drawing.Color]::FromArgb(245,230,235); Muted=[System.Drawing.Color]::FromArgb(180,140,160); Ok=[System.Drawing.Color]::FromArgb(100,220,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(30,12,16) },
+    @{ Name='CYBERPUNK';   Bg=[System.Drawing.Color]::FromArgb(5,10,18);  Panel=[System.Drawing.Color]::FromArgb(8,18,30);  Card=[System.Drawing.Color]::FromArgb(12,26,42);  CardHover=[System.Drawing.Color]::FromArgb(18,36,54);  Border=[System.Drawing.Color]::FromArgb(30,74,102);  Accent=[System.Drawing.Color]::FromArgb(0,229,255);  AccentLt=[System.Drawing.Color]::FromArgb(100,240,255); Secondary=[System.Drawing.Color]::FromArgb(255,43,214); Glow=[System.Drawing.Color]::FromArgb(0,136,170); TextC=[System.Drawing.Color]::FromArgb(230,250,255); Muted=[System.Drawing.Color]::FromArgb(122,160,180); Ok=[System.Drawing.Color]::FromArgb(50,255,154); Warn=[System.Drawing.Color]::FromArgb(255,210,60);   Err=[System.Drawing.Color]::FromArgb(255,79,120); Field=[System.Drawing.Color]::FromArgb(6,16,26) },
+    @{ Name='ROYAL GOLD';  Bg=[System.Drawing.Color]::FromArgb(18,16,10); Panel=[System.Drawing.Color]::FromArgb(28,24,16); Card=[System.Drawing.Color]::FromArgb(38,32,22); CardHover=[System.Drawing.Color]::FromArgb(50,40,28); Border=[System.Drawing.Color]::FromArgb(100,80,42); Accent=[System.Drawing.Color]::FromArgb(212,160,50); AccentLt=[System.Drawing.Color]::FromArgb(255,210,100); Secondary=[System.Drawing.Color]::FromArgb(255,240,160); Glow=[System.Drawing.Color]::FromArgb(140,110,30); TextC=[System.Drawing.Color]::FromArgb(255,248,230); Muted=[System.Drawing.Color]::FromArgb(180,163,130); Ok=[System.Drawing.Color]::FromArgb(140,210,120); Warn=[System.Drawing.Color]::FromArgb(255,200,60);   Err=[System.Drawing.Color]::FromArgb(255,100,120); Field=[System.Drawing.Color]::FromArgb(22,18,12) },
+    @{ Name='ARCTIC';      Bg=[System.Drawing.Color]::FromArgb(10,16,24); Panel=[System.Drawing.Color]::FromArgb(16,24,32); Card=[System.Drawing.Color]::FromArgb(22,34,44); CardHover=[System.Drawing.Color]::FromArgb(30,46,58); Border=[System.Drawing.Color]::FromArgb(58,86,104); Accent=[System.Drawing.Color]::FromArgb(90,200,255); AccentLt=[System.Drawing.Color]::FromArgb(150,230,255); Secondary=[System.Drawing.Color]::FromArgb(200,244,255); Glow=[System.Drawing.Color]::FromArgb(42,124,160); TextC=[System.Drawing.Color]::FromArgb(240,250,255); Muted=[System.Drawing.Color]::FromArgb(146,168,180); Ok=[System.Drawing.Color]::FromArgb(100,224,160); Warn=[System.Drawing.Color]::FromArgb(255,210,100);  Err=[System.Drawing.Color]::FromArgb(255,110,130); Field=[System.Drawing.Color]::FromArgb(12,18,24) },
+    @{ Name='SAKURA';      Bg=[System.Drawing.Color]::FromArgb(24,10,18); Panel=[System.Drawing.Color]::FromArgb(36,16,28); Card=[System.Drawing.Color]::FromArgb(48,22,38); CardHover=[System.Drawing.Color]::FromArgb(62,30,48); Border=[System.Drawing.Color]::FromArgb(112,64,90); Accent=[System.Drawing.Color]::FromArgb(255,92,168); AccentLt=[System.Drawing.Color]::FromArgb(255,154,204); Secondary=[System.Drawing.Color]::FromArgb(255,200,160); Glow=[System.Drawing.Color]::FromArgb(176,38,110); TextC=[System.Drawing.Color]::FromArgb(255,240,246); Muted=[System.Drawing.Color]::FromArgb(188,142,166); Ok=[System.Drawing.Color]::FromArgb(120,216,144); Warn=[System.Drawing.Color]::FromArgb(255,200,100);  Err=[System.Drawing.Color]::FromArgb(255,92,120);  Field=[System.Drawing.Color]::FromArgb(30,12,22) },
+    @{ Name='OBSIDIAN';    Bg=[System.Drawing.Color]::FromArgb(10,10,12); Panel=[System.Drawing.Color]::FromArgb(18,18,22); Card=[System.Drawing.Color]::FromArgb(26,26,32); CardHover=[System.Drawing.Color]::FromArgb(36,36,44); Border=[System.Drawing.Color]::FromArgb(60,60,72);  Accent=[System.Drawing.Color]::FromArgb(180,180,200); AccentLt=[System.Drawing.Color]::FromArgb(230,230,240); Secondary=[System.Drawing.Color]::FromArgb(140,140,160); Glow=[System.Drawing.Color]::FromArgb(80,80,94); TextC=[System.Drawing.Color]::FromArgb(248,248,250); Muted=[System.Drawing.Color]::FromArgb(152,152,166); Ok=[System.Drawing.Color]::FromArgb(140,216,144); Warn=[System.Drawing.Color]::FromArgb(216,192,112); Err=[System.Drawing.Color]::FromArgb(224,104,120); Field=[System.Drawing.Color]::FromArgb(14,14,18) },
+    @{ Name='TOXIC';       Bg=[System.Drawing.Color]::FromArgb(10,16,6);  Panel=[System.Drawing.Color]::FromArgb(18,26,12); Card=[System.Drawing.Color]::FromArgb(26,36,18); CardHover=[System.Drawing.Color]::FromArgb(36,48,26); Border=[System.Drawing.Color]::FromArgb(74,100,42);  Accent=[System.Drawing.Color]::FromArgb(168,230,60); AccentLt=[System.Drawing.Color]::FromArgb(212,255,100); Secondary=[System.Drawing.Color]::FromArgb(240,255,60); Glow=[System.Drawing.Color]::FromArgb(90,140,30); TextC=[System.Drawing.Color]::FromArgb(246,255,234); Muted=[System.Drawing.Color]::FromArgb(160,180,138); Ok=[System.Drawing.Color]::FromArgb(140,255,100); Warn=[System.Drawing.Color]::FromArgb(255,230,60);   Err=[System.Drawing.Color]::FromArgb(255,92,100);  Field=[System.Drawing.Color]::FromArgb(14,20,8) }
 )
 
-$script:ThemeName = 'ПУРПУРНАЯ'
+$script:ThemeName = 'PURPLE RUSH'
 
 function Set-ThemeColors {
     param($Palette)
@@ -25,6 +31,8 @@ function Set-ThemeColors {
     [RustSuite.Theme]::BorderC   = $Palette.Border
     [RustSuite.Theme]::Accent    = $Palette.Accent
     [RustSuite.Theme]::AccentLt  = $Palette.AccentLt
+    [RustSuite.Theme]::Secondary = $Palette.Secondary
+    [RustSuite.Theme]::Glow      = $Palette.Glow
     [RustSuite.Theme]::TextC     = $Palette.TextC
     [RustSuite.Theme]::Muted     = $Palette.Muted
     [RustSuite.Theme]::Ok        = $Palette.Ok
@@ -69,6 +77,12 @@ function Update-ControlTree {
                 }
             } elseif ($c -is [System.Windows.Forms.TextBox]) {
                 $c.BackColor = [RustSuite.Theme]::Field
+                $c.ForeColor = [RustSuite.Theme]::TextC
+            } elseif ($c -is [System.Windows.Forms.ComboBox] -or $c -is [System.Windows.Forms.ListBox]) {
+                $c.BackColor = [RustSuite.Theme]::Field
+                $c.ForeColor = [RustSuite.Theme]::TextC
+            } elseif ($c -is [System.Windows.Forms.CheckBox]) {
+                $c.BackColor = [System.Drawing.Color]::Transparent
                 $c.ForeColor = [RustSuite.Theme]::TextC
             }
         } catch {}
@@ -334,27 +348,24 @@ function Show-SettingsPanel {
     $script:RowHost.Controls.Add($lblTheme)
 
     $btnY = S 52
-    $btnH = S 34
+    $tileH = S 64
     $gap  = S 8
-    $sw   = S 8
     $colW = [int](($w - $gap) / 2)
     $idx  = 0
     foreach ($t in $script:Themes) {
         $rx = if ($idx % 2 -eq 0) { 0 } else { $colW + $gap }
-        $ry = $btnY + [int]([Math]::Floor($idx / 2) * ($btnH + $gap))
+        $ry = $btnY + [int]([Math]::Floor($idx / 2) * ($tileH + $gap))
 
-        $swatch = New-Object System.Windows.Forms.Panel
-        $swatch.BackColor = $t.Accent
-        $swatch.Bounds    = New-Object System.Drawing.Rectangle $rx, $ry, $sw, $btnH
-        $script:RowHost.Controls.Add($swatch)
-
-        $btn = New-Object RustSuite.FlatButton
-        $btn.Text   = $(if ($t.Name -eq $script:ThemeName) { '✓ ' + $t.Name } else { $t.Name })
-        $btn.Font   = [RustSuite.Theme]::FBtn
-        $btn.Style  = $(if ($t.Name -eq $script:ThemeName) { 'Primary' } else { 'Ghost' })
-        $btn.Bounds = New-Object System.Drawing.Rectangle ($rx + $sw), $ry, ($colW - $sw), $btnH
-        $btn.Tag    = $t
-        $btn.Add_Click({
+        $tile = New-Object RustSuite.ThemeTile
+        $tile.Title    = [string]$t.Name
+        $tile.Sub      = 'анимированный градиент'
+        $tile.ColorA   = $t.Bg
+        $tile.ColorB   = $t.Accent
+        $tile.ColorC   = $t.Secondary
+        $tile.Selected = ($t.Name -eq $script:ThemeName)
+        $tile.Bounds   = New-Object System.Drawing.Rectangle $rx, $ry, $colW, $tileH
+        $tile.Tag      = $t
+        $tile.Add_Click({
             param($s, $e)
             $th = $s.Tag
             Apply-Theme $th.Name -Save
@@ -363,11 +374,30 @@ function Show-SettingsPanel {
             Set-Status ('Тема: ' + $th.Name) '#8B949E'
             Restart-SettingsSoon
         })
-        $script:RowHost.Controls.Add($btn)
+        $script:RowHost.Controls.Add($tile)
         $idx++
     }
 
-    $y = $btnY + [int]([Math]::Ceiling($idx / 2) * ($btnH + $gap)) + (S 12)
+    $y = $btnY + [int]([Math]::Ceiling($idx / 2) * ($tileH + $gap)) + (S 10)
+
+    $btnRandom = New-Object RustSuite.FlatButton
+    $btnRandom.Style  = 'Ghost'
+    $btnRandom.Text   = '✦  СЛУЧАЙНАЯ ТЕМА'
+    $btnRandom.Font   = [RustSuite.Theme]::FSmall
+    $btnRandom.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 32)
+    $btnRandom.Add_Click({
+        $pool = @($script:Themes | Where-Object { $_.Name -ne $script:ThemeName })
+        if ($pool.Count -gt 0) {
+            $th = $pool | Get-Random
+            Apply-Theme $th.Name -Save
+            Update-ThemeSurfaces
+            Write-Log ('Случайная тема: ' + $th.Name) 'ok'
+            Set-Status ('Тема: ' + $th.Name) '#8B949E'
+            Restart-SettingsSoon
+        }
+    })
+    $script:RowHost.Controls.Add($btnRandom)
+    $y += S 44
 
     # --- Система ---
     $lblSys = New-Object System.Windows.Forms.Label
@@ -409,6 +439,27 @@ function Show-SettingsPanel {
     })
     $script:RowHost.Controls.Add($btnCopySys)
     $y += S 44
+
+    $halfW = [int](($w - (S 8)) / 2)
+    $btnData = New-Object RustSuite.FlatButton
+    $btnData.Style  = 'Ghost'
+    $btnData.Text   = 'ПАПКА ДАННЫХ'
+    $btnData.Font   = [RustSuite.Theme]::FSmall
+    $btnData.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 30)
+    $btnData.Add_Click({ Open-Explorer $script:Root })
+    $script:RowHost.Controls.Add($btnData)
+
+    $btnLog = New-Object RustSuite.FlatButton
+    $btnLog.Style  = 'Ghost'
+    $btnLog.Text   = 'ОТКРЫТЬ ЖУРНАЛ'
+    $btnLog.Font   = [RustSuite.Theme]::FSmall
+    $btnLog.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, ($w - $halfW - (S 8)), (S 30)
+    $btnLog.Add_Click({
+        if (Test-Path -LiteralPath $script:LogFile) { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:LogFile + '"') | Out-Null }
+        else { Write-Log 'Журнал ещё не создан' 'info' }
+    })
+    $script:RowHost.Controls.Add($btnLog)
+    $y += S 42
 
     # --- Поведение ---
     $lblBeh = New-Object System.Windows.Forms.Label

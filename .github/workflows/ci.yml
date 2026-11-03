@@ -14,18 +14,30 @@ jobs:
         shell: pwsh
         run: ./rebuild-bat.ps1
 
-      - name: PowerShell syntax check
+      - name: Verify build artifacts
         shell: pwsh
         run: |
+          foreach ($p in './src/RustOptimizer.ps1', './RustOptimizer.bat',
+                         './assets/app-icon.png', './assets/rust-optimizer.ico',
+                         './tools/make-icon.ps1', './tools/install-shortcut.ps1') {
+            if (-not (Test-Path -LiteralPath $p)) { throw "Missing: $p" }
+            if ((Get-Item -LiteralPath $p).Length -lt 100) { throw "Too small: $p" }
+          }
+          Write-Host 'Artifacts OK'
+
+      - name: PowerShell 5.1 syntax check
+        shell: powershell
+        run: |
+          $tokens = $null
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path './src/RustOptimizer.ps1'),
-            [ref]$null, [ref]$errors) | Out-Null
+            [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) {
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
-          Write-Host 'Syntax OK'
+          Write-Host 'Syntax OK (Windows PowerShell 5.1)'
 
       - name: Self test
         shell: powershell

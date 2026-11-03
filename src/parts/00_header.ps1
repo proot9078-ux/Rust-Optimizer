@@ -1,6 +1,7 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v3.0
-#  Оптимизация Windows под игру RUST + официальные cfg/бинды + мониторинг + темы
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.0
+#  Оптимизация Windows под RUST + официальные cfg/бинды +
+#  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
 param([switch]$SelfTest, [switch]$TestUi)
@@ -8,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi)
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '3.1'
+$script:AppVersion   = '4.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -34,8 +35,10 @@ $script:BindCmdBox   = $null
 $script:StatsTimer   = $null
 $script:CpuBar       = $null
 $script:RamBar       = $null
+$script:DiskBar      = $null
 $script:CpuVal       = $null
 $script:RamVal       = $null
+$script:DiskVal      = $null
 $script:RustState    = $null
 $script:Header       = $null
 $script:AutoClose    = $true

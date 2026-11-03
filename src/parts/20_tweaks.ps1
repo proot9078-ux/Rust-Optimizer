@@ -97,6 +97,21 @@ $script:Tweaks = @(
         Desc = 'Windows перестаёт раздавать обновления другим ПК и забирать канал во время игры. Сами обновления работают.'
         Apply = { Invoke-DeliveryOpt }; Undo = { Undo-DeliveryOpt } }
 
+    [pscustomobject]@{ Id = 'fullscreenopt'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить оптимизации полного экрана (глобально)'
+        Desc = 'FSE-поведение Windows для всех игр: честный эксклюзивный полный экран. На части систем ломает alt-tab — тестируйте.'
+        Apply = { Invoke-FullscreenOpt }; Undo = { Undo-FullscreenOpt } }
+
+    [pscustomobject]@{ Id = 'xboxsvc'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить службы Xbox'
+        Desc = 'XblAuthManager, XblGameSave, XboxNetApiSvc и XboxGipSvc. Освобождает ресурсы, но ломает Game Pass и Xbox-приложения.'
+        Apply = { Invoke-XboxServices }; Undo = { Undo-XboxServices } }
+
+    [pscustomobject]@{ Id = 'faststartup'; Group = 'sys'; Risk = $true; Default = $false
+        Name = 'Отключить быстрый запуск Windows'
+        Desc = 'Полное завершение работы вместо гибридного сна: чище загрузка, меньше «залипших» драйверов. Включение — обратно.'
+        Apply = { Invoke-FastStartupOff }; Undo = { Undo-FastStartupOff } }
+
     [pscustomobject]@{ Id = 'nagle'; Group = 'net'; Risk = $false; Default = $true
         Name = 'Отключить алгоритм Nagle'
         Desc = 'Мелкие пакеты уходят сразу: пинг стабильнее, регистрация попаданий точнее.'
@@ -171,6 +186,56 @@ $script:Tweaks = @(
         Name = 'Очистить кэш шейдеров DirectX'
         Desc = 'Удаляет старый кэш D3D/NVIDIA/AMD/Intel. Освобождает место и лечит артефакты; игра соберёт кэш заново.'
         Apply = { Invoke-ShaderClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'deepclean'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Глубокая очистка Windows'
+        Desc = 'TEMP, кэш обновлений и Delivery Optimization, WER, дампы, кэш браузеров, логи Steam/RUST и старые журналы. Корзину и настройки не трогает.'
+        Apply = { Invoke-DeepClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'updatecache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистить кэш обновлений Windows'
+        Desc = 'Останавливает службы обновления, очищает SoftwareDistribution\Download и кэш Delivery Optimization, затем возвращает службы.'
+        Apply = { Invoke-UpdateCacheClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'dumps'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Удалить дампы и отчёты об ошибках'
+        Desc = 'MEMORY.DMP, Minidump, CrashDumps, WER и LiveKernelReports. Освобождает место; сами ошибки это не исправляет.'
+        Apply = { Invoke-DumpClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'browsercache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Кэш браузеров'
+        Desc = 'Только Cache/Code Cache/GPUCache у Edge, Chrome, Brave, Vivaldi, Yandex, Firefox и Opera. Пароли, cookies и история не удаляются.'
+        Apply = { Invoke-BrowserCache }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'gamejunk'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Логи и дампы Steam / RUST'
+        Desc = 'Старые логи Steam, httpcache, crash dumps и *.dmp RUST. Файлы cfg, сохранения и настройки игры не затрагиваются.'
+        Apply = { Invoke-GameJunkClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'thumbcache'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Кэш эскизов и иконок'
+        Desc = 'Удаляет thumbcache/iconcache. Занятые Explorer файлы пропускаются; для полной пересборки есть отдельная кнопка в «Ремонте».'
+        Apply = { Invoke-ThumbnailClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'winsxs'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистка WinSxS (DISM)'
+        Desc = 'DISM /StartComponentCleanup удаляет устаревшие компоненты. Долго (5–30 минут), но без удаления актуальных обновлений.'
+        Apply = { Invoke-WinSxSClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'oldwindows'; Group = 'clean'; Risk = $true; Default = $false
+        Name = 'Удалить Windows.old и следы установки'
+        Desc = 'Windows.old, $Windows.~BT, $Windows.~WS, $WinREAgent. Освобождает десятки ГБ, но откат к предыдущей версии Windows станет невозможен.'
+        Apply = { Invoke-OldWindowsClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'prefetchclean'; Group = 'clean'; Risk = $false; Default = $false
+        Name = 'Очистить Prefetch'
+        Desc = 'Удаляет *.pf и ReadyBoot. Первые запуски приложений станут чуть медленнее, затем Windows соберёт кэш заново.'
+        Apply = { Invoke-PrefetchClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'eventlogs'; Group = 'clean'; Risk = $true; Default = $false
+        Name = 'Очистить журналы событий Windows'
+        Desc = 'Удаляет старые записи из журналов. Необратимо и мешает диагностике — используйте только осознанно после сбора отчётов.'
+        Apply = { Invoke-EventLogClean }; Undo = { } }
 )
 
 # Восстанавливаем выбор пользователя между запусками

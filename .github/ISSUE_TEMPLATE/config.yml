@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/proot9078-ux/Rust-Optimizer/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/proot9078-ux/Rust-Optimizer/discussions
+    about: Ask a question or discuss an idea before opening a feature request.

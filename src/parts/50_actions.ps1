@@ -146,6 +146,39 @@ function Rust-OneClickFromUi {
     [void][System.Windows.Forms.MessageBox]::Show($res, 'PURPLE RUSH', 'OK', 'Information')
 }
 
+function Start-DeepCleanFromUi {
+    if ($script:Busy) { return }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Глубокая очистка Windows:`n`n· TEMP и Windows Temp`n· кэш обновлений Windows`n· дампы и отчёты об ошибках`n· кэш браузеров (без паролей и истории)`n· логи Steam / RUST`n· кэш эскизов и иконок`n`nЗакройте браузеры и игры. Продолжить?"),
+        'PURPLE RUSH — ГЛУБОКАЯ ОЧИСТКА', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+
+    Set-Busy $true
+    Set-ProgressValue 0
+    try {
+        Write-Log 'Глубокая очистка Windows: старт' 'step'
+        Set-Status 'Глубокая очистка Windows…' '#FF8A4C'
+        Invoke-DeepClean
+        Set-ProgressValue 100
+        $mb  = [math]::Round($script:CleanBytes / 1MB, 1)
+        $obj = $script:CleanObjects
+        Set-Status ('Очистка готова: {0:N1} МБ' -f $mb) '#4ECB71'
+        Write-Log ('Глубокая очистка: освобождено {0:N1} МБ' -f $mb) 'ok'
+        Update-Stats
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Освобождено: {0:N1} МБ`nУдалено объектов: {1:N0}`n`nПароли, история браузеров, cfg RUST и сохранения не затронуты." -f $mb, $obj),
+            'PURPLE RUSH — ГОТОВО', 'OK', 'Information')
+    } catch {
+        Write-Log ('Глубокая очистка: ' + $_.Exception.Message) 'err'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Очистка прервана: " + $_.Exception.Message + "`n`nЖурнал: " + $script:LogFile),
+            'PURPLE RUSH', 'OK', 'Warning')
+    } finally {
+        Set-Busy $false
+        Set-ProgressValue 0
+    }
+}
+
 function Update-Stats {
     $cpu = -1
     $ram = -1
@@ -201,6 +234,30 @@ function Update-Stats {
         } else {
             $script:RamBar.Value = 0
             $script:RamVal.Text  = 'н/д'
+        }
+    }
+
+    $diskUsed = -1
+    $diskFreeGb = 0.0
+    $diskFreePct = 0.0
+    try {
+        $di = New-Object System.IO.DriveInfo($env:SystemDrive)
+        if ($di.IsReady -and $di.TotalSize -gt 0) {
+            $diskFreePct = ($di.AvailableFreeSpace / [double]$di.TotalSize) * 100.0
+            $diskUsed = [int][Math]::Round(100.0 - $diskFreePct)
+            $diskFreeGb = [math]::Round($di.AvailableFreeSpace / 1GB, 1)
+        }
+    } catch {}
+    if ($script:DiskBar -and -not $script:DiskBar.IsDisposed) {
+        if ($diskUsed -ge 0) {
+            $script:DiskBar.Value = $diskUsed
+            $script:DiskVal.Text  = ('{0:N1} ГБ' -f $diskFreeGb)
+            $script:DiskVal.ForeColor = if ($diskFreePct -lt 8) { [RustSuite.Theme]::Err }
+                                        elseif ($diskFreePct -lt 15) { [RustSuite.Theme]::Warn }
+                                        else { [RustSuite.Theme]::TextC }
+        } else {
+            $script:DiskBar.Value = 0
+            $script:DiskVal.Text  = 'н/д'
         }
     }
 
@@ -396,16 +453,23 @@ $btnUndo.Add_Click({
     }
 })
 
+$btnScan.Add_Click({
+    if ($script:Busy) { return }
+    Show-Group 'repair'
+    Start-HealthScan
+})
+
 # ---------- Жизненный цикл ----------
 $form.Add_FormClosing({
     param($s, $e)
-    if ($script:Busy) {
+    if ($script:Busy -and -not $script:TestUi) {
         $a = [System.Windows.Forms.MessageBox]::Show(
             'Оптимизация ещё выполняется. Прервать?', 'PURPLE RUSH', 'YesNo', 'Warning')
         if ($a -ne 'Yes') { $e.Cancel = $true; return }
     }
     try { $script:StatsTimer.Stop() } catch {}
     try { $script:LaunchTimer.Stop() } catch {}
+    try { if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose() } } catch {}
     if ($script:State['TimerOn']) { try { [RustSuite.Native]::TimerStop() } catch {} }
 })
 
@@ -435,9 +499,11 @@ $form.Add_Shown({
 
     if ($script:TestUi) {
         $script:ProbeStep = 0
+        $script:ProbeHold = $false
         $script:ProbeTimer = New-Object System.Windows.Forms.Timer
         $script:ProbeTimer.Interval = 450
         $script:ProbeTimer.Add_Tick({
+            if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
                     0 { Show-Group 'sys' }
@@ -446,24 +512,38 @@ $form.Add_Shown({
                     3 { Show-Group 'binds' }
                     4 { Show-Group 'clean' }
                     5 {
-                        Show-Group 'settings'
+                        Show-Group 'repair'
+                        if ($script:RepairReport) { Write-Host ('REPAIR ROWS: ' + @($script:RepairReport).Count) }
                     }
                     6 {
-                        Apply-Theme 'ТЁМНО-СИНЯЯ' -Save
+                        Show-Group 'repair'
+                        $script:ProbeHold = $true
+                        try { Start-HealthScan } finally { $script:ProbeHold = $false }
+                        Write-Host ('HEALTH ROWS: ' + @($script:RepairReport).Count)
+                    }
+                    7 {
+                        Show-Group 'settings'
+                        Apply-Theme 'MIDNIGHT' -Save
                         Update-ThemeSurfaces
                         Restart-SettingsSoon
                     }
-                    7 {
+                    8 {
                         Show-Group 'sys'
                         $c = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] }) | Select-Object -First 1
                         if ($c) { $c.On = (-not $c.On); $c.On = (-not $c.On) }
                         Update-Stats
                     }
-                    8 {
-                        Apply-Theme 'ПУРПУРНАЯ' -Save
+                    9 {
+                        Show-Group 'repair'
+                        Apply-Theme 'SAKURA' -Save
+                        Update-ThemeSurfaces
+                    }
+                    10 {
+                        Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'
                         $script:ProbeTimer.Stop()
+                        $script:Busy = $false
                         $form.Close()
                     }
                 }

@@ -24,7 +24,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -32,6 +32,70 @@ if ($SelfTest) {
             }
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
     }
+
+    # Новые движки очистки, ремонта и диагностики доступны
+    foreach ($fn in 'Invoke-DeepClean', 'Invoke-UpdateCacheClean', 'Invoke-DumpClean',
+                    'Invoke-BrowserCache', 'Invoke-GameJunkClean', 'Invoke-ThumbnailClean',
+                    'Invoke-WinSxSClean', 'Invoke-OldWindowsClean', 'Invoke-PrefetchClean',
+                    'Invoke-EventLogClean', 'Invoke-SfcScan', 'Invoke-DismRestore',
+                    'Invoke-DismComponentCleanup', 'Invoke-ChkdskScan', 'Invoke-WindowsUpdateReset',
+                    'Invoke-NetworkReset', 'Invoke-WmiRepair', 'Invoke-TimeResync',
+                    'Invoke-DriverRescan', 'Invoke-SpoolerReset', 'Invoke-IconCacheRebuild',
+                    'Get-SystemHealthReport', 'Get-HealthReportText', 'Invoke-QuickHealthFix',
+                    'Get-CleanupPotential', 'Test-PendingReboot') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ("MISSING FUNCTION: " + $fn); $fail++
+        }
+    }
+
+    # Все новые модули очистки присутствуют в списке
+    foreach ($id in 'deepclean', 'updatecache', 'dumps', 'browsercache', 'gamejunk',
+                    'thumbcache', 'winsxs', 'oldwindows', 'prefetchclean', 'eventlogs') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ("MISSING CLEANUP TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Иконка лаунчера лежит рядом с исходниками
+    try {
+        $iconPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\rust-optimizer.ico'
+        if (-not (Test-Path -LiteralPath $iconPath)) {
+            Write-Host 'MISSING APP ICON'; $fail++
+        } else {
+            $icoBytes = [IO.File]::ReadAllBytes($iconPath)
+            if ($icoBytes.Length -lt 10000 -or $icoBytes[0] -ne 0 -or $icoBytes[1] -ne 0 -or $icoBytes[2] -ne 1 -or $icoBytes[3] -ne 0) {
+                Write-Host 'APP ICON IS INVALID'; $fail++
+            }
+        }
+    } catch { Write-Host 'APP ICON CHECK ERROR'; $fail++ }
+
+    # Безопасная очистка действительно удаляет только содержимое своей папки
+    $cleanTmp = Join-Path $env:TEMP ('rustopt-clean-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $cleanTmp -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $cleanTmp 'a.tmp') -Value ('x' * 2048) -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $cleanTmp 'b.tmp') -Value ('y' * 2048) -Encoding ASCII
+        $subDir = Join-Path $cleanTmp 'nested'
+        New-Item -ItemType Directory -Path $subDir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $subDir 'c.tmp') -Value ('z' * 2048) -Encoding ASCII
+        Reset-CleanMeter
+        $null = Clear-FolderSafe $cleanTmp
+        $left = @(Get-ChildItem -LiteralPath $cleanTmp -Force -ErrorAction SilentlyContinue).Count
+        if ($left -ne 0) { Write-Host ('CLEANUP LEFT FILES: ' + $left); $fail++ }
+        if ($script:CleanObjects -ne 3) { Write-Host ('CLEANUP METER OBJECTS: ' + $script:CleanObjects); $fail++ }
+        if ($script:CleanBytes -lt 4000) { Write-Host ('CLEANUP METER BYTES: ' + $script:CleanBytes); $fail++ }
+    } catch {
+        Write-Host ('CLEANUP CHECK ERROR: ' + $_.Exception.Message); $fail++
+    } finally {
+        Remove-Item -LiteralPath $cleanTmp -Recurse -Force -ErrorAction SilentlyContinue
+        Reset-CleanMeter
+    }
+
+    # Проверка незавершённой перезагрузки не должна падать
+    try {
+        $pending = Test-PendingReboot
+        if ($pending -isnot [bool]) { Write-Host 'PENDING REBOOT RETURN TYPE'; $fail++ }
+    } catch { Write-Host ('PENDING REBOOT ERROR: ' + $_.Exception.Message); $fail++ }
 
     # Перезагрузка: shutdown.exe присутствует, аргументы корректны
     try {
