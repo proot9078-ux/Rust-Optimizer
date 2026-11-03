@@ -105,11 +105,118 @@ if ($SelfTest) {
         if ($shArgs -notmatch '^/r /t 10 ') { Write-Host 'SHUTDOWN ARGS BROKEN'; $fail++ }
     } catch { Write-Host 'SHUTDOWN CHECK ERROR'; $fail++ }
 
-    # Нативные методы таймера и колеса мыши присутствуют
-    foreach ($m in 'TimerStart', 'TimerStop', 'MemLoad', 'MemTotalMb', 'MemFreeMb') {
+    # Нативные методы таймера, колеса мыши и гаммы присутствуют
+    foreach ($m in 'TimerStart', 'TimerStop', 'MemLoad', 'MemTotalMb', 'MemFreeMb', 'GammaGet', 'GammaSet') {
         try {
             if (-not [RustSuite.Native].GetMethod($m)) { Write-Host ('MISSING NATIVE: ' + $m); $fail++ }
         } catch { Write-Host ('NATIVE CHECK ERROR: ' + $m); $fail++ }
+    }
+
+    # Картинка: функции, пресеты и математика гаммы
+    foreach ($fn in 'Get-LookPreset', 'New-NeutralRamp', 'New-LookRamp', 'Test-RampClose',
+                    'Apply-LookPreset', 'Restore-LookGamma', 'Get-GammaStatus',
+                    'Set-RustVisualCfg', 'Undo-RustVisualCfg', 'Get-RustVisualPresetLines',
+                    'Get-GpuInfo', 'Get-GpuPanelGuide', 'Open-GpuPanel', 'Get-GpuStatusText') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING PICTURE FUNCTION: ' + $fn); $fail++
+        }
+    }
+    try {
+        if (@($script:LookPresets).Count -lt 3) { Write-Host 'PICTURE PRESETS MISSING'; $fail++ }
+        $lookKeys = @($script:LookPresets | ForEach-Object { [string]$_.Key })
+        if (@($lookKeys | Select-Object -Unique).Count -ne $lookKeys.Count) {
+            Write-Host 'DUPLICATE PICTURE PRESET KEYS'; $fail++
+        }
+        $neutral = New-NeutralRamp
+        if ($null -eq $neutral -or $neutral.Length -ne 768) {
+            Write-Host 'NEUTRAL GAMMA RAMP BROKEN'; $fail++
+        } else {
+            if (-not (Test-RampClose $neutral $neutral 0)) { Write-Host 'GAMMA RAMP COMPARE FAILED'; $fail++ }
+            $vivid = New-LookRamp $neutral 'vivid'
+            if ($null -eq $vivid -or $vivid.Length -ne 768) { Write-Host 'LOOK GAMMA RAMP BROKEN'; $fail++ }
+            elseif (Test-RampClose $neutral $vivid 0) { Write-Host 'LOOK PRESET HAS NO EFFECT'; $fail++ }
+        }
+
+        # В cfg-пресетах не должно быть устаревших/неверных ключей.
+        $invalidKeys = @('graphics.shafts', 'graphics.quality', 'global.quality',
+                         'global.render_scale', 'graphics.antialiasing',
+                         'graphics.parallaxbuildings', 'graphics.shadowquality',
+                         'global.pixel_scale', 'graphics.shadowdistance', 'shadow.distance')
+        $cfgLines = @($script:RustVisualBaseLines) + @($script:RustMaxCfgLines)
+        foreach ($group in $script:RustVisualExtras.Values) { $cfgLines += @($group) }
+        $usedKeys = @($cfgLines | ForEach-Object { (([string]$_).Trim() -split '\s+')[0].ToLower() } | Select-Object -Unique)
+        foreach ($bad in $invalidKeys) {
+            if ($usedKeys -contains $bad) { Write-Host ('INVALID RUST CONVAR: ' + $bad); $fail++ }
+        }
+        if ($usedKeys -notcontains 'effects.shafts') { Write-Host 'EFFECTS.SHAFTS MISSING'; $fail++ }
+        $lineNo = 0
+        foreach ($line in @($script:RustMaxCfgLines)) {
+            $lineNo++
+            if ([string]$line -notmatch '^[a-z0-9_.]+\s+\S+') {
+                Write-Host ('BROKEN MAX CFG LINE ' + $lineNo + ': ' + $line); $fail++
+            }
+        }
+
+        # Визуальный пресет действительно содержит нужные ключи.
+        $vividLines = @(Get-RustVisualPresetLines 'vivid')
+        if ($vividLines.Count -lt 20) { Write-Host 'VISUAL PRESET TOO SMALL'; $fail++ }
+        $vividKeys = @($vividLines | ForEach-Object { (([string]$_).Trim() -split '\s+')[0].ToLower() })
+        if ($vividKeys -notcontains 'effects.shafts') { Write-Host 'VISUAL PRESET MISSES EFFECTS.SHAFTS'; $fail++ }
+        if ($vividKeys -contains 'graphics.shafts') { Write-Host 'VISUAL PRESET USES INVALID SHAFTS'; $fail++ }
+
+        # Бэкап гаммы: запись и чтение без изменения реального дисплея.
+        $oldGammaDir = $script:GammaDir
+        $testGammaDir = Join-Path $env:TEMP ('rustopt-gamma-' + [Guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Path $testGammaDir -Force | Out-Null
+            $script:GammaDir = $testGammaDir
+            $ramp = New-NeutralRamp
+            if (-not (Save-GammaBackup $ramp)) { Write-Host 'GAMMA BACKUP SAVE FAILED'; $fail++ }
+            $read = Read-GammaBackup
+            if ($null -eq $read -or -not (Test-RampClose $ramp $read 0)) {
+                Write-Host 'GAMMA BACKUP READ FAILED'; $fail++
+            }
+        } finally {
+            $script:GammaDir = $oldGammaDir
+            Remove-Item -LiteralPath $testGammaDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if (-not (Get-GpuPanelGuide)) { Write-Host 'GPU PANEL GUIDE EMPTY'; $fail++ }
+
+        # Снимок client.cfg: возвращаются только управляемые строки,
+        # чужие настройки и исходные значения сохраняются.
+        $oldRustBackup = $script:RustBackup
+        $tmpSnapDir = Join-Path $env:TEMP ('rustopt-snap-' + [Guid]::NewGuid().ToString('N'))
+        $tmpCfg = Join-Path $tmpSnapDir 'client.cfg'
+        try {
+            New-Item -ItemType Directory -Path $tmpSnapDir -Force | Out-Null
+            $script:RustBackup = $tmpSnapDir
+            [IO.File]::WriteAllText($tmpCfg,
+                "effects.shafts True`r`ngraphics.drawdistance 3000`r`nkeep.me 1`r`n",
+                (New-Object System.Text.UTF8Encoding($false)))
+            if (-not (Save-VisualSnapshot $tmpCfg)) { Write-Host 'VISUAL SNAPSHOT SAVE FAILED'; $fail++ }
+            Merge-CfgFile -Path $tmpCfg -Lines @(Get-RustVisualPresetLines 'vivid') -ManagedKeys $script:RustVisualManaged
+            $appliedText = [IO.File]::ReadAllText($tmpCfg)
+            if ($appliedText -notmatch 'effects\.shafts\s+False') { Write-Host 'VISUAL CFG APPLY FAILED'; $fail++ }
+            if (-not (Restore-VisualSnapshot $tmpCfg)) { Write-Host 'VISUAL SNAPSHOT RESTORE FAILED'; $fail++ }
+            $restoredText = [IO.File]::ReadAllText($tmpCfg)
+            if ($restoredText -notmatch 'effects\.shafts\s+True') { Write-Host 'VISUAL CFG SHAFTS NOT RESTORED'; $fail++ }
+            if ($restoredText -notmatch 'keep\.me 1') { Write-Host 'VISUAL CFG LOST FOREIGN LINE'; $fail++ }
+            if ($restoredText -notmatch 'graphics\.drawdistance 3000') { Write-Host 'VISUAL CFG LOST ORIGINAL VALUE'; $fail++ }
+            if ($restoredText -match 'effects\.bloom') { Write-Host 'VISUAL CFG LEFT MANAGED KEY'; $fail++ }
+        } catch {
+            Write-Host ('VISUAL SNAPSHOT CHECK ERROR: ' + $_.Exception.Message); $fail++
+        } finally {
+            $script:RustBackup = $oldRustBackup
+            Remove-Item -LiteralPath $tmpSnapDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        $gpu = Get-GpuInfo
+        if ($null -eq $gpu -or -not $gpu.Vendor -or -not $gpu.Name) {
+            Write-Host 'GPU INFO BROKEN'; $fail++
+        }
+    } catch {
+        Write-Host ('PICTURE CHECK ERROR: ' + $_.Exception.Message); $fail++
+        Write-Host ([string]$_.ScriptStackTrace)
     }
 
     # Валидация биндов

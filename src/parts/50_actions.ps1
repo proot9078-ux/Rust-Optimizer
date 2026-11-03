@@ -539,6 +539,26 @@ $form.Add_Shown({
                         Update-ThemeSurfaces
                     }
                     10 {
+                        Show-Group 'picture'
+                        try {
+                            if ($script:PicturePreviewAfter -and -not $script:PicturePreviewAfter.IsDisposed) {
+                                $script:PicturePreviewAfter.Invalidate()
+                                $script:PicturePreviewAfter.Update()
+                            }
+                        } catch {}
+                        $tiles = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.ThemeTile] })
+                        $prevs = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.BufferedPanel] })
+                        Write-Host ('PICTURE TILES: ' + $tiles.Count + ' · PREVIEWS: ' + $prevs.Count + ' · PAINTS: ' + $script:PreviewPaints)
+                        if ($tiles.Count -lt 3) { throw 'PICTURE TILES MISSING' }
+                        if ($prevs.Count -lt 2) { throw 'PICTURE PREVIEW MISSING' }
+                        if ($script:PreviewPaintWarned) { throw 'PICTURE PAINT FAILED' }
+                        if ([int]$script:PreviewPaints -lt 1) { throw 'PICTURE PREVIEW NOT PAINTED' }
+                        if ($script:PictureStatusLabel -and $script:PictureStatusLabel.Text.Length -lt 3) {
+                            throw 'PICTURE STATUS MISSING'
+                        }
+                        Write-Host 'PICTURE OK'
+                    }
+                    11 {
                         Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'

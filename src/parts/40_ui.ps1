@@ -183,24 +183,35 @@ $form.Controls.Add($header)
 
 # ---------- Навигация ----------
 $script:NavButtons = @{}
-$nav = New-Object System.Windows.Forms.Panel
+$nav = New-Object System.Windows.Forms.TableLayoutPanel
 $script:NavPanel = $nav
-$nav.Dock      = 'Fill'
-$nav.BackColor = [RustSuite.Theme]::Bg
+$nav.Dock        = 'Fill'
+$nav.BackColor   = [RustSuite.Theme]::Bg
+$nav.ColumnCount = 1
+$nav.RowCount    = 2
+[void]$nav.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle(
+    [System.Windows.Forms.SizeType]::Percent, 100)))
+[void]$nav.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
+    [System.Windows.Forms.SizeType]::Percent, 100)))
+[void]$nav.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
+    [System.Windows.Forms.SizeType]::Absolute, (S 108))))
 
 $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
-$navTop.Dock      = 'Top'
-$navTop.Height    = S 286
-$navTop.BackColor = [RustSuite.Theme]::Bg
+$navTop.Dock       = 'Fill'
+$navTop.BackColor  = [RustSuite.Theme]::Bg
+# При минимальной высоте окна восемь пунктов не помещаются —
+# включаем прокрутку вместо наложения на блок «ПРОФИЛИ».
+$navTop.AutoScroll = $true
 
 $script:Groups = @(
-    @{ Id = 'sys';   Glyph = '◆'; Title = 'СИСТЕМА'; Sub = 'питание и приоритеты' },
-    @{ Id = 'net';   Glyph = '↔'; Title = 'СЕТЬ';    Sub = 'пинг и пакеты' },
-    @{ Id = 'rust';  Glyph = '▶'; Title = 'RUST';    Sub = 'профиль игры' },
-    @{ Id = 'binds'; Glyph = '⌨'; Title = 'БИНДЫ';   Sub = 'keys.cfg одной кнопкой' },
-    @{ Id = 'clean'; Glyph = '✦'; Title = 'ОЧИСТКА'; Sub = 'мусор и фоновые' },
-    @{ Id = 'repair'; Glyph = '◈'; Title = 'РЕМОНТ'; Sub = 'проверка и лечение Windows' },
+    @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
+    @{ Id = 'net';     Glyph = '↔'; Title = 'СЕТЬ';     Sub = 'пинг и пакеты' },
+    @{ Id = 'rust';    Glyph = '▶'; Title = 'RUST';     Sub = 'профиль игры' },
+    @{ Id = 'picture'; Glyph = '◐'; Title = 'КАРТИНКА'; Sub = 'цвет и панель GPU' },
+    @{ Id = 'binds';   Glyph = '⌨'; Title = 'БИНДЫ';    Sub = 'keys.cfg одной кнопкой' },
+    @{ Id = 'clean';   Glyph = '✦'; Title = 'ОЧИСТКА';  Sub = 'мусор и фоновые' },
+    @{ Id = 'repair';  Glyph = '◈'; Title = 'РЕМОНТ';   Sub = 'проверка и лечение Windows' },
     @{ Id = 'settings'; Glyph = '⚙'; Title = 'НАСТРОЙКИ'; Sub = 'темы и мониторинг' }
 )
 
@@ -210,7 +221,7 @@ foreach ($grp in $script:Groups) {
     $b.Text   = $grp.Glyph + '  ' + $grp.Title
     $b.Sub    = $grp.Sub
     $b.Tag    = $grp.Id
-    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 186), (S 36))
+    $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
     $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
@@ -243,8 +254,8 @@ $btnMax.Font   = [RustSuite.Theme]::FSmall
 $btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 56), (S 186), (S 30)
 
 $navBottom.Controls.AddRange(@($lblProfiles, $btnSafe, $btnMax))
-$nav.Controls.Add($navTop)
-$nav.Controls.Add($navBottom)
+$nav.Controls.Add($navTop, 0, 0)
+$nav.Controls.Add($navBottom, 0, 1)
 
 # ---------- Правая колонка: статистика + журнал ----------
 $rightCol = New-Object System.Windows.Forms.TableLayoutPanel
@@ -628,6 +639,10 @@ function Show-Group {
     $script:SetRamBar  = $null
     $script:SetValCpu  = $null
     $script:SetValRam  = $null
+    $script:PictureStatusLabel  = $null
+    $script:PicturePreviewAfter = $null
+    $script:PictureTiles        = @()
+    $script:PictureDescLabel    = $null
 
     foreach ($k in $script:NavButtons.Keys) { $script:NavButtons[$k].Selected = ($k -eq $gid) }
     foreach ($c in @($script:RowHost.Controls)) { $c.Dispose() }
@@ -641,6 +656,7 @@ function Show-Group {
 
     try {
         if ($gid -eq 'binds') { Show-BindsPanel; return }
+        if ($gid -eq 'picture') { Show-PicturePanel; return }
         if ($gid -eq 'repair') { Show-RepairPanel; return }
         if ($gid -eq 'settings') { Show-SettingsPanel; return }
 

@@ -554,13 +554,14 @@ function Invoke-RustProcessPolish {
 #  RUST: client.cfg — трава и пост-эффекты
 # ============================================================
 $script:RustCfgLines = @(
-    'grass.displacement false',
-    'graphics.shafts false',
-    'graphics.dof false',
+    'grass.displacement False',
+    'effects.shafts False',
+    'graphics.dof False',
     'fps.graph 0'
 )
 
-$script:RustCfgManaged = @('grass.displacement', 'graphics.shafts', 'graphics.dof', 'fps.graph')
+# graphics.shafts — старый неверный ключ: удаляем его из cfg при слиянии.
+$script:RustCfgManaged = @('grass.displacement', 'effects.shafts', 'graphics.shafts', 'graphics.dof', 'fps.graph')
 
 function Get-RustCfgCommandText {
     return @($script:RustCfgLines)
@@ -723,26 +724,79 @@ function Invoke-RecycleBin {
 #  RUST: максимальная легальная оптимизация cfg (FPS)
 # ============================================================
 $script:RustMaxCfgLines = @(
-    'grass.displacement false',
-    'grass.shadow.onlyself false',
+    'graphics.drawdistance 1500',
+    'graphics.lodbias 0.5',
+    'graphics.hlod True',
+    'graphics.parallax 0',
+    'graphics.af 4',
+    'graphics.contactshadows False',
+    'graphics.dof False',
+    'graphics.shadowmode 1',
+    'graphics.shadowlights 1',
+    'graphics.aggressiveshadowlod True',
+    'graphics.aggressiveshadowlodwearable True',
+    'graphics.impostorshadows False',
+    'graphics.volumetric_clouds 0',
+    'graphics.renderscale 1',
+    'graphics.maxqueuedframes 1',
+    'graphicssettings.globaltexturemipmaplimit 1',
+    'graphicssettings.shadowqualitypreset 0',
+    'graphicssettings.enablelodcrossfade False',
+    'graphicssettings.softparticles False',
+    'graphicssettings.particleraycastbudget 256',
+    'effects.antialiasing 0',
+    'effects.ao False',
+    'effects.bloom False',
+    'effects.lensdirt False',
+    'effects.motionblur False',
+    'effects.shafts False',
+    'effects.sharpen False',
+    'effects.vignet False',
+    'effects.hurtoverlay False',
+    'effects.otherplayerslightflares False',
+    'effects.creationeffects False',
+    'effects.maxgibs 0',
+    'particle.quality 25',
+    'grass.quality 0',
     'grass.distance 0',
-    'graphics.shafts false',
-    'graphics.dof false',
-    'graphics.shadowdistance 0',
-    'shadow.distance 0',
-    'graphics.quality 0',
-    'global.quality 0',
-    'global.render_scale 0.8',
-    'graphics.drawdistance 400',
-    'terrain.quality 0',
-    'graphics.antialiasing false',
-    'graphics.parallaxbuildings false',
-    'graphics.shadowquality 0',
-    'graphics.lodbias 0',
-    'fps.graph 0',
-    'global.pixel_scale 0.9'
+    'grass.displacement False',
+    'decor.quality 0',
+    'terrain.quality 25',
+    'tree.quality 50',
+    'tree.meshes 25',
+    'mesh.quality 50',
+    'water.quality 0',
+    'water.reflections 0',
+    'sss.enabled False',
+    'reflection.planarreflections False',
+    'legs.enablelegs False',
+    'player.footik False',
+    'ui.showinventoryplayer False',
+    'fps.graph 0'
 )
-$script:RustMaxCfgManaged = @('grass.displacement','grass.shadow.onlyself','grass.distance','graphics.shafts','graphics.dof','graphics.shadowdistance','shadow.distance','graphics.quality','global.quality','global.render_scale','graphics.drawdistance','terrain.quality','graphics.antialiasing','graphics.parallaxbuildings','graphics.shadowquality','graphics.lodbias','fps.graph','global.pixel_scale')
+
+# Управляем только реальными конварами. Старые неверные ключи также
+# включены в список, чтобы слияние вычищало их из client.cfg.
+$script:RustMaxCfgManaged = @(
+    'graphics.drawdistance','graphics.lodbias','graphics.hlod','graphics.parallax',
+    'graphics.af','graphics.contactshadows','graphics.dof','graphics.shadowmode',
+    'graphics.shadowlights','graphics.aggressiveshadowlod',
+    'graphics.aggressiveshadowlodwearable','graphics.impostorshadows',
+    'graphics.volumetric_clouds','graphics.renderscale','graphics.maxqueuedframes',
+    'graphicssettings.globaltexturemipmaplimit','graphicssettings.shadowqualitypreset',
+    'graphicssettings.enablelodcrossfade','graphicssettings.softparticles',
+    'graphicssettings.particleraycastbudget','effects.antialiasing','effects.ao',
+    'effects.bloom','effects.lensdirt','effects.motionblur','effects.shafts',
+    'effects.sharpen','effects.vignet','effects.hurtoverlay',
+    'effects.otherplayerslightflares','effects.creationeffects','effects.maxgibs',
+    'particle.quality','grass.quality','grass.distance','grass.displacement',
+    'decor.quality','terrain.quality','tree.quality','tree.meshes','mesh.quality',
+    'water.quality','water.reflections','sss.enabled','reflection.planarreflections',
+    'legs.enablelegs','player.footik','ui.showinventoryplayer','fps.graph',
+    'graphics.shafts','graphics.shadowdistance','shadow.distance','graphics.quality',
+    'global.quality','global.render_scale','graphics.antialiasing',
+    'graphics.parallaxbuildings','graphics.shadowquality','global.pixel_scale'
+)
 
 function Invoke-RustMaxCfg {
     if (-not $script:RustExe) { throw 'RUST не найден — оптимизация cfg пропущена' }

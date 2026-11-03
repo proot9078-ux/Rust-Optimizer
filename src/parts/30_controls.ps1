@@ -1005,6 +1005,46 @@ namespace RustSuite
 
         public static void TimerStart() { try { timeBeginPeriod(1); } catch { } }
         public static void TimerStop() { try { timeEndPeriod(1); } catch { } }
+
+        // Гамма-таблица дисплея: безопасное изменение цвета драйвером,
+        // без оверлеев и без вмешательства в процесс игры.
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern bool GetDeviceGammaRamp(IntPtr hdc, [Out] ushort[] lpRamp);
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern bool SetDeviceGammaRamp(IntPtr hdc, [In] ushort[] lpRamp);
+
+        public static ushort[] GammaGet()
+        {
+            IntPtr dc = IntPtr.Zero;
+            try
+            {
+                dc = GetDC(IntPtr.Zero);
+                if (dc == IntPtr.Zero) return null;
+                ushort[] ramp = new ushort[768];
+                if (!GetDeviceGammaRamp(dc, ramp)) return null;
+                return ramp;
+            }
+            catch { return null; }
+            finally { if (dc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, dc); }
+        }
+
+        public static bool GammaSet(ushort[] ramp)
+        {
+            if (ramp == null || ramp.Length != 768) return false;
+            IntPtr dc = IntPtr.Zero;
+            try
+            {
+                dc = GetDC(IntPtr.Zero);
+                if (dc == IntPtr.Zero) return false;
+                return SetDeviceGammaRamp(dc, ramp);
+            }
+            catch { return false; }
+            finally { if (dc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, dc); }
+        }
     }
 }
 '@

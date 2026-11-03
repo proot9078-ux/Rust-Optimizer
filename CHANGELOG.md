@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.1 — 2026-11-03
+
+- Добавлена страница **«КАРТИНКА»** (`19_picture.ps1`, `46_picture_ui.ps1`): пресеты `BLOGGER VIVID`, `КИНО`, `НОЧЬ`, живой предпросмотр «до/после», выбор пресета и запись визуальных конваров в `client.cfg`.
+- Гамма/контраст Windows применяются через GDI с сохранением исходной таблицы дисплея и кнопкой **«ВЕРНУТЬ ЦВЕТ»**. Гамма действует на основной монитор и сбрасывается после перезагрузки — это указано в интерфейсе.
+- Определение видеокарты и запуск панели драйвера: NVIDIA Control Panel / NVIDIA app, AMD Software: Adrenalin Edition, Intel Graphics Command Center. Для каждой панели добавлены точные значения Digital Vibrance / Radeon Image Sharpening / Custom Color и кнопка копирования инструкции.
+- Визуальный `client.cfg` использует снимок только управляемых строк: чужие настройки не удаляются, кнопка **«ВЕРНУТЬ CLIENT.CFG»** восстанавливает исходные значения.
+- Исправлены неверные конвары RUST: `graphics.shafts` → `effects.shafts`. Профиль максимальной оптимизации переписан на актуальные ключи (`graphics.shadowmode`, `graphicssettings.shadowqualitypreset`, `graphics.volumetric_clouds`, `effects.*`, `grass.*`, `water.*` и др.).
+- Старые неверные ключи (`graphics.quality`, `global.quality`, `global.render_scale`, `graphics.antialiasing`, `graphics.parallaxbuildings`, `graphics.shadowquality`, `global.pixel_scale`, `graphics.shadowdistance`, `shadow.distance`) при слиянии вычищаются из `client.cfg`.
+- Навигация переведена на `TableLayoutPanel`: 8 разделов помещаются без наложения на блок «ПРОФИЛИ», при малой высоте включается прокрутка.
+- `-SelfTest` проверяет нативные `GammaGet`/`GammaSet`, математику гамма-таблиц, набор пресетов, отсутствие устаревших конваров и определение GPU; `-TestUi` открывает страницу «КАРТИНКА» и проверяет плитки/предпросмотр.
+- Документация обновлена: политика «без Freestyle/ReShade/оверлеев», ограничения гаммы и безопасные каналы настройки цвета.
+
 ## 4.0 — 2026-11-03
 
 - Добавлен **Windows Care Engine** (`15_cleaner.ps1`): 10 новых модулей очистки — глубокая очистка, кэш Windows Update/Delivery Optimization, дампы и WER, кэш браузеров, логи Steam/RUST, эскизы и иконки, WinSxS через DISM, `Windows.old`, Prefetch, журналы событий. Новые модули по умолчанию выключены, опасные действия требуют подтверждения.
