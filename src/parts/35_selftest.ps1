@@ -24,7 +24,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -60,6 +60,21 @@ if ($SelfTest) {
                     'thumbcache', 'winsxs', 'oldwindows', 'prefetchclean', 'eventlogs') {
         if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
             Write-Host ("MISSING CLEANUP TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Дополнительные безопасные твики v5.0
+    foreach ($id in 'gamebar', 'widgets', 'copilot', 'recall', 'suggestions',
+                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ("MISSING SAFE TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Панель «ОБЗОР» и её живые контролы доступны
+    foreach ($fn in 'Get-OptimizationStats', 'Get-OptimizationScore', 'Update-HomeLive', 'Show-HomePanel') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING DASHBOARD FUNCTION: ' + $fn); $fail++
         }
     }
 

@@ -1184,6 +1184,292 @@ namespace RustSuite
         }
     }
 
+    // Компактная карточка-показатель для панели «ОБЗОР».
+    public class StatCard : Control, IAnim
+    {
+        public string Label = "";
+        public string Value = "";
+        public string Hint = "";
+        public Color AccentC = Theme.Accent;
+        private bool _hover;
+        private float _ha;
+        private float _glow;
+
+        public StatCard()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        public void SetValue(string v)
+        {
+            if (Value == v) return;
+            Value = v == null ? "" : v;
+            _glow = 1f;
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Anim.Add(this); Invalidate(); base.OnMouseLeave(e); }
+
+        public bool Tick()
+        {
+            float th = _hover ? 1f : 0f;
+            _ha = Ease.Approach(_ha, th, 0.22f);
+            _glow = Ease.Approach(_glow, 0f, 0.06f);
+            Invalidate();
+            return !(Ease.Done(_ha, th) && _glow < 0.01f);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill = Theme.Lerp(Theme.CardBg, Theme.CardHover, _ha);
+            using (GraphicsPath p = Theme.Round(r, 9f))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    fill, Theme.PanelBg, LinearGradientMode.Vertical))
+                    g.FillPath(b, p);
+                Color line = Theme.Lerp(Theme.BorderC, Color.FromArgb(90, AccentC), Math.Max(_ha, _glow * 0.7f));
+                using (Pen pen = new Pen(line, 1f)) g.DrawPath(pen, p);
+            }
+            using (SolidBrush b = new SolidBrush(AccentC))
+                g.FillRectangle(b, 0, 12, 3, Math.Max(6, Height - 24));
+
+            TextRenderer.DrawText(g, Label, Theme.FHead, new Rectangle(14, 9, Width - 22, 16), Theme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using (Font fv = new Font("Segoe UI Semibold", 14f, FontStyle.Bold))
+                TextRenderer.DrawText(g, Value, fv, new Rectangle(14, 24, Width - 22, Height - 40), Theme.TextC,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            if (!string.IsNullOrEmpty(Hint))
+                TextRenderer.DrawText(g, Hint, Theme.FSmall, new Rectangle(14, Height - 20, Width - 22, 15), Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    // Кольцевой индикатор оценки оптимизации: дуга, градиент, бегущий блик.
+    public class RingGauge : Control, IAnim
+    {
+        private double _v, _shown;
+        private float _phase;
+        private string _caption = "";
+        private string _sub = "";
+
+        public double Value
+        {
+            get { return _v; }
+            set { _v = Math.Max(0, Math.Min(100, value)); Anim.Add(this); }
+        }
+
+        public string Caption
+        {
+            get { return _caption; }
+            set { _caption = value == null ? "" : value; Invalidate(); }
+        }
+
+        public string Sub
+        {
+            get { return _sub; }
+            set { _sub = value == null ? "" : value; Invalidate(); }
+        }
+
+        public RingGauge()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            _phase = 0.2f;
+        }
+
+        public bool Tick()
+        {
+            _shown = _shown + (_v - _shown) * 0.12;
+            _phase += 0.012f;
+            if (_phase > 1f) _phase -= 1f;
+            Invalidate();
+            return Math.Abs(_v - _shown) > 0.05 || _shown > 0.5 || _v > 0.5;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int pad = 12;
+            int side = Math.Min(Width, Height) - pad * 2;
+            if (side < 20) return;
+            RectangleF r = new RectangleF((Width - side) / 2f, (Height - side) / 2f, side, side);
+            float th = Math.Max(6f, side * 0.075f);
+
+            using (Pen track = new Pen(Color.FromArgb(36, Theme.BorderC), th))
+            {
+                track.StartCap = LineCap.Round;
+                track.EndCap = LineCap.Round;
+                g.DrawArc(track, r, 135f, 270f);
+            }
+
+            float sweep = (float)(270.0 * (_shown / 100.0));
+            if (sweep > 0.4f)
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    Rectangle.Round(r), Theme.Accent, Theme.Secondary, 45f))
+                using (Pen arc = new Pen(b, th))
+                {
+                    arc.StartCap = LineCap.Round;
+                    arc.EndCap = LineCap.Round;
+                    g.DrawArc(arc, r, 135f, sweep);
+                }
+
+                // Бегущий блик по дуге.
+                if (_shown > 4 && _shown < 99.9)
+                {
+                    float a = 135f + sweep * _phase;
+                    double rad = a * Math.PI / 180.0;
+                    float cx = r.X + r.Width / 2f + (float)Math.Cos(rad) * (side / 2f);
+                    float cy = r.Y + r.Height / 2f + (float)Math.Sin(rad) * (side / 2f);
+                    float d = th * 0.55f;
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(210, Color.White)))
+                        g.FillEllipse(b, cx - d / 2f, cy - d / 2f, d, d);
+                }
+            }
+
+            string big = ((int)Math.Round(_shown)).ToString();
+            using (Font fBig = new Font("Segoe UI Semibold", Math.Max(15f, side * 0.23f), FontStyle.Bold))
+            using (Font fPct = new Font("Segoe UI", Math.Max(8f, side * 0.075f)))
+            {
+                Size bs = TextRenderer.MeasureText(big, fBig);
+                Rectangle br = new Rectangle(0, (Height / 2) - (int)(bs.Height * 0.78), Width, bs.Height);
+                TextRenderer.DrawText(g, big, fBig, br, Theme.TextC,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                Rectangle pr = new Rectangle((Width + bs.Width / 2) / 2 + 1, br.Y + (int)(bs.Height * 0.30), Width, (int)(bs.Height * 0.55));
+                TextRenderer.DrawText(g, "%", fPct, pr, Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix);
+            }
+            if (!string.IsNullOrEmpty(_caption))
+            {
+                Rectangle cr = new Rectangle(0, (Height / 2) + (int)(side * 0.11), Width, 20);
+                TextRenderer.DrawText(g, _caption, Theme.FHead, cr, Theme.TextC,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            }
+            if (!string.IsNullOrEmpty(_sub))
+            {
+                Rectangle sr = new Rectangle(0, (Height / 2) + (int)(side * 0.11) + 19, Width, 18);
+                TextRenderer.DrawText(g, _sub, Theme.FSmall, sr, Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            }
+        }
+    }
+
+    // Живой график нагрузки: заполненная область, линия и точка на конце.
+    public class Sparkline : Control, IAnim
+    {
+        private readonly List<float> _pts = new List<float>();
+        private readonly int _cap;
+        private float _phase;
+        private Color _line;
+
+        public Sparkline() : this(60) { }
+
+        public Sparkline(int capacity)
+        {
+            _cap = Math.Max(4, capacity);
+            _line = Theme.AccentLt;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        public Color LineColor
+        {
+            get { return _line; }
+            set { _line = value; Invalidate(); }
+        }
+
+        public void Push(double value)
+        {
+            float v = (float)Math.Max(0, Math.Min(100, value));
+            _pts.Add(v);
+            while (_pts.Count > _cap) _pts.RemoveAt(0);
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        public void Reset()
+        {
+            _pts.Clear();
+            Invalidate();
+        }
+
+        public int Count { get { return _pts.Count; } }
+
+        public bool Tick()
+        {
+            _phase += 0.02f;
+            if (_phase > 1f) _phase -= 1f;
+            Invalidate();
+            return _pts.Count > 1;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int n = _pts.Count;
+            if (n < 2 || Width < 8 || Height < 8) return;
+
+            // Мягкая сетка.
+            using (Pen grid = new Pen(Color.FromArgb(22, Theme.BorderC), 1f))
+            {
+                for (int i = 1; i < 4; i++)
+                {
+                    int yy = Height * i / 4;
+                    g.DrawLine(grid, 0, yy, Width, yy);
+                }
+            }
+
+            PointF[] pts = new PointF[n];
+            float stepX = Width / (float)(n - 1);
+            for (int i = 0; i < n; i++)
+            {
+                float y = Height - 2f - (_pts[i] / 100f) * (Height - 4f);
+                pts[i] = new PointF(i * stepX, y);
+            }
+
+            GraphicsPath area = new GraphicsPath();
+            area.AddLine(0, Height, (int)pts[0].X, (int)pts[0].Y);
+            area.AddLines(pts);
+            area.AddLine((int)pts[n - 1].X, (int)pts[n - 1].Y, Width, Height);
+            area.AddLine(Width, Height, 0, Height);
+            area.CloseFigure();
+            using (LinearGradientBrush b = new LinearGradientBrush(
+                new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                Color.FromArgb(110, _line), Color.FromArgb(0, _line), 90f))
+                g.FillPath(b, area);
+            area.Dispose();
+
+            using (Pen pen = new Pen(_line, 1.8f))
+            {
+                pen.LineJoin = LineJoin.Round;
+                g.DrawLines(pen, pts);
+            }
+
+            PointF last = pts[n - 1];
+            float r = 3.0f + (float)(Math.Sin(_phase * Math.PI * 2) * 1.2);
+            using (SolidBrush halo = new SolidBrush(Color.FromArgb(90, _line)))
+                g.FillEllipse(halo, last.X - r * 2, last.Y - r * 2, r * 4, r * 4);
+            using (SolidBrush dot = new SolidBrush(_line))
+                g.FillEllipse(dot, last.X - r, last.Y - r, r * 2, r * 2);
+        }
+    }
+
     public class SlideTween : IAnim
     {
         private readonly Control _c;

@@ -236,6 +236,56 @@ $script:Tweaks = @(
         Name = 'Очистить журналы событий Windows'
         Desc = 'Удаляет старые записи из журналов. Необратимо и мешает диагностике — используйте только осознанно после сбора отчётов.'
         Apply = { Invoke-EventLogClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'gamebar'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Game Bar без оверлея и подсказок'
+        Desc = 'Убирает всплывающую панель Xbox, автозапись и подсказки. Игровой режим Windows остаётся включённым.'
+        Apply = { Invoke-GameBarOff }; Undo = { Undo-GameBarOff } }
+
+    [pscustomobject]@{ Id = 'widgets'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить виджеты Windows 11'
+        Desc = 'Убирает ленту новостей и кнопку виджетов с панели задач. Работает через официальную политику Dsh.'
+        Apply = { Invoke-WidgetsOff }; Undo = { Undo-WidgetsOff } }
+
+    [pscustomobject]@{ Id = 'copilot'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить Copilot'
+        Desc = 'Скрывает кнопку Copilot и отключает его политикой Windows. Возврат — одной кнопкой «Откат».'
+        Apply = { Invoke-CopilotOff }; Undo = { Undo-CopilotOff } }
+
+    [pscustomobject]@{ Id = 'recall'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить Windows Recall'
+        Desc = 'Запрещает фоновую ИИ-запись экрана и анализ активности через политику WindowsAI.'
+        Apply = { Invoke-RecallOff }; Undo = { Undo-RecallOff } }
+
+    [pscustomobject]@{ Id = 'suggestions'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Убрать рекомендации и рекламу в «Пуске»'
+        Desc = 'Отключает подсказки, тихую установку приложений и рекламные блоки Content Delivery Manager.'
+        Apply = { Invoke-SuggestionsOff }; Undo = { Undo-SuggestionsOff } }
+
+    [pscustomobject]@{ Id = 'searchweb'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Поиск Windows без Bing'
+        Desc = 'Поиск в «Пуске» показывает только локальные файлы и приложения — без веб-результатов и Cortana.'
+        Apply = { Invoke-SearchWebOff }; Undo = { Undo-SearchWebOff } }
+
+    [pscustomobject]@{ Id = 'bgappsglobal'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Ограничить фоновые приложения'
+        Desc = 'Глобально запрещает приложениям работать в фоне. Steam и RUST запускаются как обычно.'
+        Apply = { Invoke-BgAppsGlobal }; Undo = { Undo-BgAppsGlobal } }
+
+    [pscustomobject]@{ Id = 'transparency'; Group = 'sys'; Risk = $false; Default = $false
+        Name = 'Отключить прозрачность Windows'
+        Desc = 'Убирает прозрачные эффекты панели задач и меню — меньше работы для GPU и видеопамяти.'
+        Apply = { Invoke-TransparencyOff }; Undo = { Undo-TransparencyOff } }
+
+    [pscustomobject]@{ Id = 'autoplay'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Отключить AutoPlay / AutoRun'
+        Desc = 'Съёмные носители больше не запускают окна автовоспроизведения и не выполняют autorun-скрипты.'
+        Apply = { Invoke-AutoPlayOff }; Undo = { Undo-AutoPlayOff } }
+
+    [pscustomobject]@{ Id = 'stickykeys'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Защита от случайного залипания клавиш'
+        Desc = 'Отключает горячие клавиши Sticky/Filter/Toggle Keys — Shift ×5 больше не блокирует управление в игре.'
+        Apply = { Invoke-StickyKeysOff }; Undo = { Undo-StickyKeysOff } }
 )
 
 # Восстанавливаем выбор пользователя между запусками

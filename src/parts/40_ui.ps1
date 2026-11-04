@@ -171,7 +171,7 @@ $footer.Add_Paint({
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
     try {
-        $hint = 'Ctrl+1…8 — разделы    ·    Ctrl+R — обновить статистику'
+        $hint = 'Ctrl+1…9 — разделы    ·    Ctrl+R — обновить статистику'
         $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
         [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
             [RustSuite.Theme]::FSmall, $hr,
@@ -274,6 +274,7 @@ $navTop.AutoScroll = $true
 $navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
+    @{ Id = 'home';    Glyph = '◉'; Title = 'ОБЗОР';    Sub = 'оценка и быстрые действия' },
     @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
     @{ Id = 'net';     Glyph = '↔'; Title = 'СЕТЬ';     Sub = 'пинг и пакеты' },
     @{ Id = 'rust';    Glyph = '▶'; Title = 'RUST';     Sub = 'профиль игры' },
@@ -712,7 +713,7 @@ function Show-BindsPanel {
 
 function Show-Group {
     param([string]$gid)
-    if (-not $gid) { $gid = 'sys' }
+    if (-not $gid) { $gid = 'home' }
     $script:ActiveGroup = $gid
 
     # Останавливаем таймеры страниц, иначе они держат удалённые контролы.
@@ -734,6 +735,13 @@ function Show-Group {
     $script:PicturePreviewAfter = $null
     $script:PictureTiles        = @()
     $script:PictureDescLabel    = $null
+    $script:HomeGauge           = $null
+    $script:HomeSpark           = $null
+    $script:HomeCpuVal          = $null
+    $script:HomeRamVal          = $null
+    $script:HomeStatusLbl       = $null
+    $script:HomeHero            = $null
+    $script:HomeCards           = @{}
 
     foreach ($k in $script:NavButtons.Keys) { $script:NavButtons[$k].Selected = ($k -eq $gid) }
     foreach ($c in @($script:RowHost.Controls)) { $c.Dispose() }
@@ -746,6 +754,7 @@ function Show-Group {
     try { $script:RowHost.SuspendLayout() } catch {}
 
     try {
+        if ($gid -eq 'home') { Show-HomePanel; return }
         if ($gid -eq 'binds') { Show-BindsPanel; return }
         if ($gid -eq 'picture') { Show-PicturePanel; return }
         if ($gid -eq 'repair') { Show-RepairPanel; return }

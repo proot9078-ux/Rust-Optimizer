@@ -1016,3 +1016,176 @@ function Invoke-ShaderClean {
     }
     Write-Log ('Кэш шейдеров очищен: {0:N0} МБ ({1} объектов), игра соберёт его заново' -f ($bytes / 1MB), $freed) 'ok'
 }
+
+# ============================================================
+#  НОВЫЕ БЕЗОПАСНЫЕ ТВИКИ v5.0 (все обратимые)
+# ============================================================
+function Set-DwordBatch {
+    param([string]$StateKey, $Items)
+    if (-not $script:State.ContainsKey($StateKey)) {
+        $snap = @{}
+        foreach ($it in $Items) {
+            $v = Get-Reg $it.P $it.N
+            $snap[($it.P + '|' + $it.N)] = if ($null -eq $v) { 'MISSING' } else { [string]$v }
+        }
+        $script:State[$StateKey] = $snap
+    }
+    foreach ($it in $Items) { Set-RegDword $it.P $it.N ([int64]$it.V) }
+}
+
+function Undo-DwordBatch {
+    param([string]$StateKey)
+    $snap = $script:State[$StateKey]
+    if (-not $snap) { return }
+    foreach ($key in @($snap.Keys)) {
+        $parts = ([string]$key).Split('|')
+        if ($parts.Count -lt 2) { continue }
+        if ([string]$snap[$key] -eq 'MISSING') { Remove-RegValue $parts[0] $parts[1] }
+        else { Set-RegDword $parts[0] $parts[1] ([int64]$snap[$key]) }
+    }
+}
+
+function Set-StringBatch {
+    param([string]$StateKey, $Items)
+    if (-not $script:State.ContainsKey($StateKey)) {
+        $snap = @{}
+        foreach ($it in $Items) {
+            $v = Get-Reg $it.P $it.N
+            $snap[($it.P + '|' + $it.N)] = if ($null -eq $v) { 'MISSING' } else { [string]$v }
+        }
+        $script:State[$StateKey] = $snap
+    }
+    foreach ($it in $Items) { Set-RegStr $it.P $it.N ([string]$it.V) }
+}
+
+function Undo-StringBatch {
+    param([string]$StateKey)
+    $snap = $script:State[$StateKey]
+    if (-not $snap) { return }
+    foreach ($key in @($snap.Keys)) {
+        $parts = ([string]$key).Split('|')
+        if ($parts.Count -lt 2) { continue }
+        if ([string]$snap[$key] -eq 'MISSING') { Remove-RegValue $parts[0] $parts[1] }
+        else { Set-RegStr $parts[0] $parts[1] ([string]$snap[$key]) }
+    }
+}
+
+# 1. Xbox Game Bar без оверлея и подсказок
+function Invoke-GameBarOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'ShowStartupPanel'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'UseNexusForGameBarEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'AutoGameModeEnabled'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; N = 'AppCaptureEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; N = 'HistoricalCaptureEnabled'; V = 0 }
+    )
+    Set-DwordBatch 'GameBarOld' $items
+    Write-Log 'Game Bar: оверлей и автозапись отключены, игровой режим сохранён' 'ok'
+}
+function Undo-GameBarOff { Undo-DwordBatch 'GameBarOld'; Write-Log 'Game Bar восстановлен' 'ok' }
+
+# 2. Виджеты Windows 11
+function Invoke-WidgetsOff {
+    $items = @(
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; N = 'AllowNewsAndInterests'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'TaskbarDa'; V = 0 }
+    )
+    Set-DwordBatch 'WidgetsOld' $items
+    Write-Log 'Виджеты Windows отключены' 'ok'
+}
+function Undo-WidgetsOff { Undo-DwordBatch 'WidgetsOld'; Write-Log 'Виджеты Windows восстановлены' 'ok' }
+
+# 3. Copilot
+function Invoke-CopilotOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot'; N = 'TurnOffWindowsCopilot'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'ShowCopilotButton'; V = 0 }
+    )
+    Set-DwordBatch 'CopilotOld' $items
+    Write-Log 'Copilot отключён и убран с панели задач' 'ok'
+}
+function Undo-CopilotOff { Undo-DwordBatch 'CopilotOld'; Write-Log 'Copilot восстановлен' 'ok' }
+
+# 4. Windows Recall (ИИ-запись экрана)
+function Invoke-RecallOff {
+    $items = @(
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'; N = 'DisableAIDataAnalysis'; V = 1 },
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI'; N = 'DisableAIDataAnalysis'; V = 1 }
+    )
+    Set-DwordBatch 'RecallOld' $items
+    Write-Log 'Windows Recall отключён (политика WindowsAI)' 'ok'
+}
+function Undo-RecallOff { Undo-DwordBatch 'RecallOld'; Write-Log 'Настройки Windows Recall восстановлены' 'ok' }
+
+# 5. Рекомендации и реклама в меню «Пуск»
+function Invoke-SuggestionsOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'Start_IrisRecommendations'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'ShowSuggestions'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SilentInstalledAppsEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SystemPaneSuggestionsEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-338388Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-338389Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-353698Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'PreInstalledAppsEnabled'; V = 0 }
+    )
+    Set-DwordBatch 'SuggestionsOld' $items
+    Write-Log 'Рекомендации и тихая установка приложений в «Пуске» отключены' 'ok'
+}
+function Undo-SuggestionsOff { Undo-DwordBatch 'SuggestionsOld'; Write-Log 'Рекомендации «Пуска» восстановлены' 'ok' }
+
+# 6. Поиск без веб-результатов и Bing
+function Invoke-SearchWebOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; N = 'DisableSearchBoxSuggestions'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'BingSearchEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'CortanaConsent'; V = 0 }
+    )
+    Set-DwordBatch 'SearchWebOld' $items
+    Write-Log 'Поиск Windows: веб-результаты Bing отключены' 'ok'
+}
+function Undo-SearchWebOff { Undo-DwordBatch 'SearchWebOld'; Write-Log 'Веб-поиск Windows восстановлен' 'ok' }
+
+# 7. Фоновые приложения глобально
+function Invoke-BgAppsGlobal {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications'; N = 'GlobalUserDisabled'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'BackgroundAppGlobalToggle'; V = 0 }
+    )
+    Set-DwordBatch 'BgAppsGlobalOld' $items
+    Write-Log 'Фоновые приложения Windows ограничены глобально' 'ok'
+}
+function Undo-BgAppsGlobal { Undo-DwordBatch 'BgAppsGlobalOld'; Write-Log 'Фоновые приложения восстановлены' 'ok' }
+
+# 8. Прозрачность Windows
+function Invoke-TransparencyOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; N = 'EnableTransparency'; V = 0 }
+    )
+    Set-DwordBatch 'TransparencyOld' $items
+    Write-Log 'Прозрачность Windows отключена — чуть меньше нагрузки на GPU' 'ok'
+}
+function Undo-TransparencyOff { Undo-DwordBatch 'TransparencyOld'; Write-Log 'Прозрачность Windows восстановлена' 'ok' }
+
+# 9. Автозапуск с носителей (AutoPlay / AutoRun)
+function Invoke-AutoPlayOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers'; N = 'DisableAutoplay'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'; N = 'NoDriveTypeAutoRun'; V = 255 }
+    )
+    Set-DwordBatch 'AutoPlayOld' $items
+    Write-Log 'AutoPlay и AutoRun для съёмных носителей отключены' 'ok'
+}
+function Undo-AutoPlayOff { Undo-DwordBatch 'AutoPlayOld'; Write-Log 'AutoPlay восстановлен' 'ok' }
+
+# 10. Залипание/фильтрация/переключение клавиш без горячих клавиш
+function Invoke-StickyKeysOff {
+    $items = @(
+        @{ P = 'HKCU:\Control Panel\Accessibility\StickyKeys'; N = 'Flags'; V = '506' },
+        @{ P = 'HKCU:\Control Panel\Accessibility\ToggleKeys'; N = 'Flags'; V = '58' },
+        @{ P = 'HKCU:\Control Panel\Accessibility\Keyboard Response'; N = 'Flags'; V = '122' }
+    )
+    Set-StringBatch 'StickyKeysOld' $items
+    Write-Log 'Случайный вызов залипания/фильтрации клавиш отключён' 'ok'
+}
+function Undo-StickyKeysOff { Undo-StringBatch 'StickyKeysOld'; Write-Log 'Спец. возможности клавиатуры восстановлены' 'ok' }

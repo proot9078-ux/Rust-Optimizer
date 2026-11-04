@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.2
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.0
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '4.2'
+$script:AppVersion   = '5.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -21,7 +21,7 @@ $script:Enabled      = @{}
 $script:RustExe      = $null
 $script:SteamPath    = $null
 $script:RustCfgDir   = $null
-$script:ActiveGroup  = 'sys'
+$script:ActiveGroup  = 'home'
 $script:SC           = 1.0
 $script:Busy         = $false
 $script:Progress     = $null
@@ -1543,6 +1543,179 @@ function Invoke-ShaderClean {
     }
     Write-Log ('Кэш шейдеров очищен: {0:N0} МБ ({1} объектов), игра соберёт его заново' -f ($bytes / 1MB), $freed) 'ok'
 }
+
+# ============================================================
+#  НОВЫЕ БЕЗОПАСНЫЕ ТВИКИ v5.0 (все обратимые)
+# ============================================================
+function Set-DwordBatch {
+    param([string]$StateKey, $Items)
+    if (-not $script:State.ContainsKey($StateKey)) {
+        $snap = @{}
+        foreach ($it in $Items) {
+            $v = Get-Reg $it.P $it.N
+            $snap[($it.P + '|' + $it.N)] = if ($null -eq $v) { 'MISSING' } else { [string]$v }
+        }
+        $script:State[$StateKey] = $snap
+    }
+    foreach ($it in $Items) { Set-RegDword $it.P $it.N ([int64]$it.V) }
+}
+
+function Undo-DwordBatch {
+    param([string]$StateKey)
+    $snap = $script:State[$StateKey]
+    if (-not $snap) { return }
+    foreach ($key in @($snap.Keys)) {
+        $parts = ([string]$key).Split('|')
+        if ($parts.Count -lt 2) { continue }
+        if ([string]$snap[$key] -eq 'MISSING') { Remove-RegValue $parts[0] $parts[1] }
+        else { Set-RegDword $parts[0] $parts[1] ([int64]$snap[$key]) }
+    }
+}
+
+function Set-StringBatch {
+    param([string]$StateKey, $Items)
+    if (-not $script:State.ContainsKey($StateKey)) {
+        $snap = @{}
+        foreach ($it in $Items) {
+            $v = Get-Reg $it.P $it.N
+            $snap[($it.P + '|' + $it.N)] = if ($null -eq $v) { 'MISSING' } else { [string]$v }
+        }
+        $script:State[$StateKey] = $snap
+    }
+    foreach ($it in $Items) { Set-RegStr $it.P $it.N ([string]$it.V) }
+}
+
+function Undo-StringBatch {
+    param([string]$StateKey)
+    $snap = $script:State[$StateKey]
+    if (-not $snap) { return }
+    foreach ($key in @($snap.Keys)) {
+        $parts = ([string]$key).Split('|')
+        if ($parts.Count -lt 2) { continue }
+        if ([string]$snap[$key] -eq 'MISSING') { Remove-RegValue $parts[0] $parts[1] }
+        else { Set-RegStr $parts[0] $parts[1] ([string]$snap[$key]) }
+    }
+}
+
+# 1. Xbox Game Bar без оверлея и подсказок
+function Invoke-GameBarOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'ShowStartupPanel'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'UseNexusForGameBarEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'AutoGameModeEnabled'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; N = 'AppCaptureEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; N = 'HistoricalCaptureEnabled'; V = 0 }
+    )
+    Set-DwordBatch 'GameBarOld' $items
+    Write-Log 'Game Bar: оверлей и автозапись отключены, игровой режим сохранён' 'ok'
+}
+function Undo-GameBarOff { Undo-DwordBatch 'GameBarOld'; Write-Log 'Game Bar восстановлен' 'ok' }
+
+# 2. Виджеты Windows 11
+function Invoke-WidgetsOff {
+    $items = @(
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; N = 'AllowNewsAndInterests'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'TaskbarDa'; V = 0 }
+    )
+    Set-DwordBatch 'WidgetsOld' $items
+    Write-Log 'Виджеты Windows отключены' 'ok'
+}
+function Undo-WidgetsOff { Undo-DwordBatch 'WidgetsOld'; Write-Log 'Виджеты Windows восстановлены' 'ok' }
+
+# 3. Copilot
+function Invoke-CopilotOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot'; N = 'TurnOffWindowsCopilot'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'ShowCopilotButton'; V = 0 }
+    )
+    Set-DwordBatch 'CopilotOld' $items
+    Write-Log 'Copilot отключён и убран с панели задач' 'ok'
+}
+function Undo-CopilotOff { Undo-DwordBatch 'CopilotOld'; Write-Log 'Copilot восстановлен' 'ok' }
+
+# 4. Windows Recall (ИИ-запись экрана)
+function Invoke-RecallOff {
+    $items = @(
+        @{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'; N = 'DisableAIDataAnalysis'; V = 1 },
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI'; N = 'DisableAIDataAnalysis'; V = 1 }
+    )
+    Set-DwordBatch 'RecallOld' $items
+    Write-Log 'Windows Recall отключён (политика WindowsAI)' 'ok'
+}
+function Undo-RecallOff { Undo-DwordBatch 'RecallOld'; Write-Log 'Настройки Windows Recall восстановлены' 'ok' }
+
+# 5. Рекомендации и реклама в меню «Пуск»
+function Invoke-SuggestionsOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'Start_IrisRecommendations'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; N = 'ShowSuggestions'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SilentInstalledAppsEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SystemPaneSuggestionsEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-338388Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-338389Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'SubscribedContent-353698Enabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; N = 'PreInstalledAppsEnabled'; V = 0 }
+    )
+    Set-DwordBatch 'SuggestionsOld' $items
+    Write-Log 'Рекомендации и тихая установка приложений в «Пуске» отключены' 'ok'
+}
+function Undo-SuggestionsOff { Undo-DwordBatch 'SuggestionsOld'; Write-Log 'Рекомендации «Пуска» восстановлены' 'ok' }
+
+# 6. Поиск без веб-результатов и Bing
+function Invoke-SearchWebOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; N = 'DisableSearchBoxSuggestions'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'BingSearchEnabled'; V = 0 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'CortanaConsent'; V = 0 }
+    )
+    Set-DwordBatch 'SearchWebOld' $items
+    Write-Log 'Поиск Windows: веб-результаты Bing отключены' 'ok'
+}
+function Undo-SearchWebOff { Undo-DwordBatch 'SearchWebOld'; Write-Log 'Веб-поиск Windows восстановлен' 'ok' }
+
+# 7. Фоновые приложения глобально
+function Invoke-BgAppsGlobal {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications'; N = 'GlobalUserDisabled'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; N = 'BackgroundAppGlobalToggle'; V = 0 }
+    )
+    Set-DwordBatch 'BgAppsGlobalOld' $items
+    Write-Log 'Фоновые приложения Windows ограничены глобально' 'ok'
+}
+function Undo-BgAppsGlobal { Undo-DwordBatch 'BgAppsGlobalOld'; Write-Log 'Фоновые приложения восстановлены' 'ok' }
+
+# 8. Прозрачность Windows
+function Invoke-TransparencyOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; N = 'EnableTransparency'; V = 0 }
+    )
+    Set-DwordBatch 'TransparencyOld' $items
+    Write-Log 'Прозрачность Windows отключена — чуть меньше нагрузки на GPU' 'ok'
+}
+function Undo-TransparencyOff { Undo-DwordBatch 'TransparencyOld'; Write-Log 'Прозрачность Windows восстановлена' 'ok' }
+
+# 9. Автозапуск с носителей (AutoPlay / AutoRun)
+function Invoke-AutoPlayOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers'; N = 'DisableAutoplay'; V = 1 },
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'; N = 'NoDriveTypeAutoRun'; V = 255 }
+    )
+    Set-DwordBatch 'AutoPlayOld' $items
+    Write-Log 'AutoPlay и AutoRun для съёмных носителей отключены' 'ok'
+}
+function Undo-AutoPlayOff { Undo-DwordBatch 'AutoPlayOld'; Write-Log 'AutoPlay восстановлен' 'ok' }
+
+# 10. Залипание/фильтрация/переключение клавиш без горячих клавиш
+function Invoke-StickyKeysOff {
+    $items = @(
+        @{ P = 'HKCU:\Control Panel\Accessibility\StickyKeys'; N = 'Flags'; V = '506' },
+        @{ P = 'HKCU:\Control Panel\Accessibility\ToggleKeys'; N = 'Flags'; V = '58' },
+        @{ P = 'HKCU:\Control Panel\Accessibility\Keyboard Response'; N = 'Flags'; V = '122' }
+    )
+    Set-StringBatch 'StickyKeysOld' $items
+    Write-Log 'Случайный вызов залипания/фильтрации клавиш отключён' 'ok'
+}
+function Undo-StickyKeysOff { Undo-StringBatch 'StickyKeysOld'; Write-Log 'Спец. возможности клавиатуры восстановлены' 'ok' }
 
 # ============================================================
 #  WINDOWS CARE ENGINE — очистка
@@ -3280,6 +3453,56 @@ $script:Tweaks = @(
         Name = 'Очистить журналы событий Windows'
         Desc = 'Удаляет старые записи из журналов. Необратимо и мешает диагностике — используйте только осознанно после сбора отчётов.'
         Apply = { Invoke-EventLogClean }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'gamebar'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Game Bar без оверлея и подсказок'
+        Desc = 'Убирает всплывающую панель Xbox, автозапись и подсказки. Игровой режим Windows остаётся включённым.'
+        Apply = { Invoke-GameBarOff }; Undo = { Undo-GameBarOff } }
+
+    [pscustomobject]@{ Id = 'widgets'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить виджеты Windows 11'
+        Desc = 'Убирает ленту новостей и кнопку виджетов с панели задач. Работает через официальную политику Dsh.'
+        Apply = { Invoke-WidgetsOff }; Undo = { Undo-WidgetsOff } }
+
+    [pscustomobject]@{ Id = 'copilot'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить Copilot'
+        Desc = 'Скрывает кнопку Copilot и отключает его политикой Windows. Возврат — одной кнопкой «Откат».'
+        Apply = { Invoke-CopilotOff }; Undo = { Undo-CopilotOff } }
+
+    [pscustomobject]@{ Id = 'recall'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Отключить Windows Recall'
+        Desc = 'Запрещает фоновую ИИ-запись экрана и анализ активности через политику WindowsAI.'
+        Apply = { Invoke-RecallOff }; Undo = { Undo-RecallOff } }
+
+    [pscustomobject]@{ Id = 'suggestions'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Убрать рекомендации и рекламу в «Пуске»'
+        Desc = 'Отключает подсказки, тихую установку приложений и рекламные блоки Content Delivery Manager.'
+        Apply = { Invoke-SuggestionsOff }; Undo = { Undo-SuggestionsOff } }
+
+    [pscustomobject]@{ Id = 'searchweb'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Поиск Windows без Bing'
+        Desc = 'Поиск в «Пуске» показывает только локальные файлы и приложения — без веб-результатов и Cortana.'
+        Apply = { Invoke-SearchWebOff }; Undo = { Undo-SearchWebOff } }
+
+    [pscustomobject]@{ Id = 'bgappsglobal'; Group = 'clean'; Risk = $false; Default = $true
+        Name = 'Ограничить фоновые приложения'
+        Desc = 'Глобально запрещает приложениям работать в фоне. Steam и RUST запускаются как обычно.'
+        Apply = { Invoke-BgAppsGlobal }; Undo = { Undo-BgAppsGlobal } }
+
+    [pscustomobject]@{ Id = 'transparency'; Group = 'sys'; Risk = $false; Default = $false
+        Name = 'Отключить прозрачность Windows'
+        Desc = 'Убирает прозрачные эффекты панели задач и меню — меньше работы для GPU и видеопамяти.'
+        Apply = { Invoke-TransparencyOff }; Undo = { Undo-TransparencyOff } }
+
+    [pscustomobject]@{ Id = 'autoplay'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Отключить AutoPlay / AutoRun'
+        Desc = 'Съёмные носители больше не запускают окна автовоспроизведения и не выполняют autorun-скрипты.'
+        Apply = { Invoke-AutoPlayOff }; Undo = { Undo-AutoPlayOff } }
+
+    [pscustomobject]@{ Id = 'stickykeys'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Защита от случайного залипания клавиш'
+        Desc = 'Отключает горячие клавиши Sticky/Filter/Toggle Keys — Shift ×5 больше не блокирует управление в игре.'
+        Apply = { Invoke-StickyKeysOff }; Undo = { Undo-StickyKeysOff } }
 )
 
 # Восстанавливаем выбор пользователя между запусками
@@ -4638,6 +4861,292 @@ namespace RustSuite
         }
     }
 
+    // Компактная карточка-показатель для панели «ОБЗОР».
+    public class StatCard : Control, IAnim
+    {
+        public string Label = "";
+        public string Value = "";
+        public string Hint = "";
+        public Color AccentC = Theme.Accent;
+        private bool _hover;
+        private float _ha;
+        private float _glow;
+
+        public StatCard()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        public void SetValue(string v)
+        {
+            if (Value == v) return;
+            Value = v == null ? "" : v;
+            _glow = 1f;
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Anim.Add(this); Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Anim.Add(this); Invalidate(); base.OnMouseLeave(e); }
+
+        public bool Tick()
+        {
+            float th = _hover ? 1f : 0f;
+            _ha = Ease.Approach(_ha, th, 0.22f);
+            _glow = Ease.Approach(_glow, 0f, 0.06f);
+            Invalidate();
+            return !(Ease.Done(_ha, th) && _glow < 0.01f);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
+            Color fill = Theme.Lerp(Theme.CardBg, Theme.CardHover, _ha);
+            using (GraphicsPath p = Theme.Round(r, 9f))
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    fill, Theme.PanelBg, LinearGradientMode.Vertical))
+                    g.FillPath(b, p);
+                Color line = Theme.Lerp(Theme.BorderC, Color.FromArgb(90, AccentC), Math.Max(_ha, _glow * 0.7f));
+                using (Pen pen = new Pen(line, 1f)) g.DrawPath(pen, p);
+            }
+            using (SolidBrush b = new SolidBrush(AccentC))
+                g.FillRectangle(b, 0, 12, 3, Math.Max(6, Height - 24));
+
+            TextRenderer.DrawText(g, Label, Theme.FHead, new Rectangle(14, 9, Width - 22, 16), Theme.Muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using (Font fv = new Font("Segoe UI Semibold", 14f, FontStyle.Bold))
+                TextRenderer.DrawText(g, Value, fv, new Rectangle(14, 24, Width - 22, Height - 40), Theme.TextC,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            if (!string.IsNullOrEmpty(Hint))
+                TextRenderer.DrawText(g, Hint, Theme.FSmall, new Rectangle(14, Height - 20, Width - 22, 15), Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    // Кольцевой индикатор оценки оптимизации: дуга, градиент, бегущий блик.
+    public class RingGauge : Control, IAnim
+    {
+        private double _v, _shown;
+        private float _phase;
+        private string _caption = "";
+        private string _sub = "";
+
+        public double Value
+        {
+            get { return _v; }
+            set { _v = Math.Max(0, Math.Min(100, value)); Anim.Add(this); }
+        }
+
+        public string Caption
+        {
+            get { return _caption; }
+            set { _caption = value == null ? "" : value; Invalidate(); }
+        }
+
+        public string Sub
+        {
+            get { return _sub; }
+            set { _sub = value == null ? "" : value; Invalidate(); }
+        }
+
+        public RingGauge()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            _phase = 0.2f;
+        }
+
+        public bool Tick()
+        {
+            _shown = _shown + (_v - _shown) * 0.12;
+            _phase += 0.012f;
+            if (_phase > 1f) _phase -= 1f;
+            Invalidate();
+            return Math.Abs(_v - _shown) > 0.05 || _shown > 0.5 || _v > 0.5;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int pad = 12;
+            int side = Math.Min(Width, Height) - pad * 2;
+            if (side < 20) return;
+            RectangleF r = new RectangleF((Width - side) / 2f, (Height - side) / 2f, side, side);
+            float th = Math.Max(6f, side * 0.075f);
+
+            using (Pen track = new Pen(Color.FromArgb(36, Theme.BorderC), th))
+            {
+                track.StartCap = LineCap.Round;
+                track.EndCap = LineCap.Round;
+                g.DrawArc(track, r, 135f, 270f);
+            }
+
+            float sweep = (float)(270.0 * (_shown / 100.0));
+            if (sweep > 0.4f)
+            {
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    Rectangle.Round(r), Theme.Accent, Theme.Secondary, 45f))
+                using (Pen arc = new Pen(b, th))
+                {
+                    arc.StartCap = LineCap.Round;
+                    arc.EndCap = LineCap.Round;
+                    g.DrawArc(arc, r, 135f, sweep);
+                }
+
+                // Бегущий блик по дуге.
+                if (_shown > 4 && _shown < 99.9)
+                {
+                    float a = 135f + sweep * _phase;
+                    double rad = a * Math.PI / 180.0;
+                    float cx = r.X + r.Width / 2f + (float)Math.Cos(rad) * (side / 2f);
+                    float cy = r.Y + r.Height / 2f + (float)Math.Sin(rad) * (side / 2f);
+                    float d = th * 0.55f;
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(210, Color.White)))
+                        g.FillEllipse(b, cx - d / 2f, cy - d / 2f, d, d);
+                }
+            }
+
+            string big = ((int)Math.Round(_shown)).ToString();
+            using (Font fBig = new Font("Segoe UI Semibold", Math.Max(15f, side * 0.23f), FontStyle.Bold))
+            using (Font fPct = new Font("Segoe UI", Math.Max(8f, side * 0.075f)))
+            {
+                Size bs = TextRenderer.MeasureText(big, fBig);
+                Rectangle br = new Rectangle(0, (Height / 2) - (int)(bs.Height * 0.78), Width, bs.Height);
+                TextRenderer.DrawText(g, big, fBig, br, Theme.TextC,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+                Rectangle pr = new Rectangle((Width + bs.Width / 2) / 2 + 1, br.Y + (int)(bs.Height * 0.30), Width, (int)(bs.Height * 0.55));
+                TextRenderer.DrawText(g, "%", fPct, pr, Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPrefix);
+            }
+            if (!string.IsNullOrEmpty(_caption))
+            {
+                Rectangle cr = new Rectangle(0, (Height / 2) + (int)(side * 0.11), Width, 20);
+                TextRenderer.DrawText(g, _caption, Theme.FHead, cr, Theme.TextC,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            }
+            if (!string.IsNullOrEmpty(_sub))
+            {
+                Rectangle sr = new Rectangle(0, (Height / 2) + (int)(side * 0.11) + 19, Width, 18);
+                TextRenderer.DrawText(g, _sub, Theme.FSmall, sr, Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Top | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            }
+        }
+    }
+
+    // Живой график нагрузки: заполненная область, линия и точка на конце.
+    public class Sparkline : Control, IAnim
+    {
+        private readonly List<float> _pts = new List<float>();
+        private readonly int _cap;
+        private float _phase;
+        private Color _line;
+
+        public Sparkline() : this(60) { }
+
+        public Sparkline(int capacity)
+        {
+            _cap = Math.Max(4, capacity);
+            _line = Theme.AccentLt;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        public Color LineColor
+        {
+            get { return _line; }
+            set { _line = value; Invalidate(); }
+        }
+
+        public void Push(double value)
+        {
+            float v = (float)Math.Max(0, Math.Min(100, value));
+            _pts.Add(v);
+            while (_pts.Count > _cap) _pts.RemoveAt(0);
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        public void Reset()
+        {
+            _pts.Clear();
+            Invalidate();
+        }
+
+        public int Count { get { return _pts.Count; } }
+
+        public bool Tick()
+        {
+            _phase += 0.02f;
+            if (_phase > 1f) _phase -= 1f;
+            Invalidate();
+            return _pts.Count > 1;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int n = _pts.Count;
+            if (n < 2 || Width < 8 || Height < 8) return;
+
+            // Мягкая сетка.
+            using (Pen grid = new Pen(Color.FromArgb(22, Theme.BorderC), 1f))
+            {
+                for (int i = 1; i < 4; i++)
+                {
+                    int yy = Height * i / 4;
+                    g.DrawLine(grid, 0, yy, Width, yy);
+                }
+            }
+
+            PointF[] pts = new PointF[n];
+            float stepX = Width / (float)(n - 1);
+            for (int i = 0; i < n; i++)
+            {
+                float y = Height - 2f - (_pts[i] / 100f) * (Height - 4f);
+                pts[i] = new PointF(i * stepX, y);
+            }
+
+            GraphicsPath area = new GraphicsPath();
+            area.AddLine(0, Height, (int)pts[0].X, (int)pts[0].Y);
+            area.AddLines(pts);
+            area.AddLine((int)pts[n - 1].X, (int)pts[n - 1].Y, Width, Height);
+            area.AddLine(Width, Height, 0, Height);
+            area.CloseFigure();
+            using (LinearGradientBrush b = new LinearGradientBrush(
+                new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                Color.FromArgb(110, _line), Color.FromArgb(0, _line), 90f))
+                g.FillPath(b, area);
+            area.Dispose();
+
+            using (Pen pen = new Pen(_line, 1.8f))
+            {
+                pen.LineJoin = LineJoin.Round;
+                g.DrawLines(pen, pts);
+            }
+
+            PointF last = pts[n - 1];
+            float r = 3.0f + (float)(Math.Sin(_phase * Math.PI * 2) * 1.2);
+            using (SolidBrush halo = new SolidBrush(Color.FromArgb(90, _line)))
+                g.FillEllipse(halo, last.X - r * 2, last.Y - r * 2, r * 4, r * 4);
+            using (SolidBrush dot = new SolidBrush(_line))
+                g.FillEllipse(dot, last.X - r, last.Y - r, r * 2, r * 2);
+        }
+    }
+
     public class SlideTween : IAnim
     {
         private readonly Control _c;
@@ -4812,6 +5321,349 @@ try { $null = [RustSuite.Theme] } catch {
 }
 
 # ============================================================
+#  ОБЗОР — новая стартовая панель v5.0
+#  Живой кольцевой индикатор, графики нагрузки и быстрые действия.
+# ============================================================
+function Get-OptimizationStats {
+    $total = @($script:Tweaks).Count
+    $on = 0
+    foreach ($t in $script:Tweaks) {
+        if ($script:Enabled[$t.Id]) { $on = $on + 1 }
+    }
+    $score = 0
+    if ($total -gt 0) { $score = [int][Math]::Round(100.0 * $on / $total) }
+    return @{ On = $on; Total = $total; Score = $score }
+}
+
+function Get-OptimizationScore {
+    return [int](Get-OptimizationStats).Score
+}
+
+function Set-ProfileFromHome {
+    param([bool]$IncludeRisk)
+    foreach ($t in $script:Tweaks) {
+        $script:Enabled[$t.Id] = if ($IncludeRisk) { $true } else { -not $t.Risk }
+    }
+    $script:State['Enabled'] = $script:Enabled
+    Save-State
+    Show-Group 'home'
+    if ($IncludeRisk) {
+        Set-Status 'Профиль «МАКСИМУМ»: включены все модули' '#E3B341'
+        Write-Log 'Профиль «МАКСИМУМ»: включены все модули, включая рискованные' 'warn'
+    } else {
+        Set-Status 'Профиль «БЕЗОПАСНЫЙ»: только проверенные модули' '#4ECB71'
+        Write-Log 'Профиль «БЕЗОПАСНЫЙ»: включены только безопасные модули' 'info'
+    }
+}
+
+function Start-OptimizationFromHome {
+    if ($script:Busy) { return }
+    $cnt = @($script:Tweaks | Where-Object { $script:Enabled[$_.Id] }).Count
+    if ($cnt -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show(
+            'Не выбран ни один модуль. Нажмите «БЕЗОПАСНЫЙ ПРОФИЛЬ» или «МАКСИМУМ».',
+            'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Применить модулей: $cnt`n`nБудет создана точка восстановления и резервные копии реестра.`nПродолжить?"),
+        'PURPLE RUSH', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+    try {
+        $null = Start-Optimization
+        Show-Group 'home'
+        Update-Stats
+        Write-Log ("Оптимизация из «ОБЗОРА» завершена: $cnt модулей") 'ok'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Готово. Применено модулей: $cnt.`n`nПерезагрузите ПК, чтобы все изменения вступили в силу."),
+            'PURPLE RUSH', 'OK', 'Information')
+    } catch {
+        Write-Log ('Ошибка оптимизации: ' + $_.Exception.Message) 'err'
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ('Ошибка: ' + $_.Exception.Message), 'PURPLE RUSH', 'OK', 'Error')
+    }
+}
+
+function Start-RollbackFromHome {
+    if ($script:Busy) { return }
+    $applied = @(Get-AppliedTweaks)
+    if ($applied.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show(
+            'Нет применённых модулей — откатывать нечего.',
+            'PURPLE RUSH', 'OK', 'Information')
+        return
+    }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        ("Откатить изменения: $($applied.Count) модулей?`n`nБудут возвращены прежние значения реестра и настроек."),
+        'PURPLE RUSH', 'YesNo', 'Question')
+    if ($ans -ne 'Yes') { return }
+    try {
+        Start-Rollback
+        Show-Group 'home'
+        Update-Stats
+        [void][System.Windows.Forms.MessageBox]::Show('Откат выполнен.', 'PURPLE RUSH', 'OK', 'Information')
+    } catch {
+        Write-Log ('Ошибка отката: ' + $_.Exception.Message) 'err'
+    }
+}
+
+# Обновление живых элементов «ОБЗОРА» из общего таймера статистики.
+function Update-HomeLive {
+    param([int]$Cpu = -1, [int]$Ram = -1, [double]$DiskFreeGb = 0, [double]$DiskFreePct = 0)
+    try {
+        if (-not $script:HomeGauge -or $script:HomeGauge.IsDisposed) { return }
+        $st = Get-OptimizationStats
+        $script:HomeGauge.Value = $st.Score
+        $script:HomeGauge.Sub = ('{0} из {1} модулей' -f $st.On, $st.Total)
+
+        if ($script:HomeSpark -and -not $script:HomeSpark.IsDisposed -and $Cpu -ge 0) {
+            # Первая точка не рисует линию — дублируем её, чтобы график
+            # появлялся сразу, а не через секунду.
+            if ($script:HomeSpark.Count -eq 0) { $script:HomeSpark.Push($Cpu) }
+            $script:HomeSpark.Push($Cpu)
+        }
+        if ($script:HomeCpuVal -and -not $script:HomeCpuVal.IsDisposed) {
+            if ($Cpu -ge 0) {
+                $script:HomeCpuVal.Text = ('CPU  {0}%' -f $Cpu)
+                $script:HomeCpuVal.ForeColor = if ($Cpu -ge 85) { [RustSuite.Theme]::Warn } else { [RustSuite.Theme]::TextC }
+            } else {
+                $script:HomeCpuVal.Text = 'CPU  —'
+                $script:HomeCpuVal.ForeColor = [RustSuite.Theme]::Muted
+            }
+        }
+        if ($script:HomeRamVal -and -not $script:HomeRamVal.IsDisposed) {
+            if ($Ram -ge 0) {
+                $script:HomeRamVal.Text = ('ОЗУ  {0}%   ·   диск свободно {1:N1} ГБ ({2:N0}%)' -f $Ram, $DiskFreeGb, $DiskFreePct)
+            } else {
+                $script:HomeRamVal.Text = 'ОЗУ  —'
+            }
+        }
+
+        if ($script:HomeCards -is [hashtable]) {
+            $mc = $script:HomeCards['modules']
+            if ($mc -and -not $mc.IsDisposed) {
+                $mc.SetValue(('{0} / {1}' -f $st.On, $st.Total))
+            }
+            $dc = $script:HomeCards['disk']
+            if ($dc -and -not $dc.IsDisposed) {
+                if ($DiskFreeGb -gt 0) { $dc.SetValue(('{0:N1} ГБ' -f $DiskFreeGb)) }
+                else { $dc.SetValue('н/д') }
+            }
+            $rc = $script:HomeCards['rust']
+            if ($rc -and -not $rc.IsDisposed) {
+                if ($script:RustExe) {
+                    if ($script:RustRunning) { $rc.SetValue('ЗАПУЩЕН') }
+                    else { $rc.SetValue('НАЙДЕН') }
+                } else { $rc.SetValue('НЕ НАЙДЕН') }
+            }
+        }
+
+        if ($script:HomeStatusLbl -and -not $script:HomeStatusLbl.IsDisposed) {
+            $applied = @(Get-AppliedTweaks).Count
+            $adm = if ($script:IsAdmin) { 'администратор' } else { 'без прав администратора' }
+            $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}' -f $applied, $adm, $script:ThemeName)
+        }
+    } catch {}
+}
+
+function Show-HomePanel {
+    $w = Get-RowWidth 18
+    if ($w -lt (S 340)) { $w = (S 340) }
+    $y = S 2
+
+    $accentBar = New-Object System.Windows.Forms.Panel
+    $accentBar.BackColor = [RustSuite.Theme]::Accent
+    $accentBar.Bounds    = New-Object System.Drawing.Rectangle 0, ($y + (S 3)), (S 3), (S 17)
+    $script:RowHost.Controls.Add($accentBar)
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text      = 'ОБЗОР  ·  ЦЕНТР УПРАВЛЕНИЯ'
+    $head.Font      = [RustSuite.Theme]::FHead
+    $head.ForeColor = [RustSuite.Theme]::TextC
+    $head.BackColor = [System.Drawing.Color]::Transparent
+    $head.AutoSize  = $false
+    $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), $y, (S 460), (S 22)
+    $script:RowHost.Controls.Add($head)
+
+    $sub = New-Object System.Windows.Forms.Label
+    $sub.Text      = 'Живая нагрузка, оценка профиля и быстрые действия — всё на одном экране.'
+    $sub.Font      = [RustSuite.Theme]::FSmall
+    $sub.ForeColor = [RustSuite.Theme]::Muted
+    $sub.BackColor = [System.Drawing.Color]::Transparent
+    $sub.AutoSize  = $false
+    $sub.Bounds    = New-Object System.Drawing.Rectangle 0, ($y + (S 22)), $w, (S 16)
+    $script:RowHost.Controls.Add($sub)
+    $y += S 46
+
+    # ---------- Герой-панель: кольцо + живой график ----------
+    $heroH   = S 198
+    $gaugeW  = S 184
+    $rightX  = $gaugeW + (S 22)
+    $rightW  = $w - $rightX - (S 14)
+    if ($rightW -lt (S 120)) { $rightW = (S 120) }
+
+    $hero = New-Object System.Windows.Forms.Panel
+    $hero.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, $heroH
+    $hero.BackColor = [RustSuite.Theme]::PanelBg
+    $script:HomeHero = $hero
+    $hero.Add_Paint({
+        param($s, $e)
+        try {
+            $g = $e.Graphics
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $r = New-Object System.Drawing.RectangleF 0.5, 0.5, ([Math]::Max(2, $s.Width - 1.5)), ([Math]::Max(2, $s.Height - 1.5))
+            $p = [RustSuite.Theme]::Round($r, 12)
+            $lw = [Math]::Max(2, $s.Width)
+            $lh = [Math]::Max(2, $s.Height)
+            $b = New-Object System.Drawing.Drawing2D.LinearGradientBrush ([System.Drawing.Rectangle]::new(0, 0, $lw, $lh)), [RustSuite.Theme]::CardBg, [RustSuite.Theme]::PanelBg, ([System.Drawing.Drawing2D.LinearGradientMode]::Vertical)
+            $g.FillPath($b, $p)
+            $b.Dispose()
+            $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, [RustSuite.Theme]::Accent)), 1
+            $g.DrawPath($pen, $p)
+            $pen.Dispose()
+            $p.Dispose()
+            $glow = New-Object System.Drawing.Drawing2D.LinearGradientBrush ([System.Drawing.Rectangle]::new(0, 0, $lw, (S 3))), [RustSuite.Theme]::Accent, [RustSuite.Theme]::Secondary, ([System.Drawing.Drawing2D.LinearGradientMode]::Horizontal)
+            $g.FillRectangle($glow, (S 16), 0, ([Math]::Max(10, $s.Width - (S 32))), (S 3))
+            $glow.Dispose()
+        } catch {}
+    })
+    $script:RowHost.Controls.Add($hero)
+
+    $script:HomeGauge = New-Object RustSuite.RingGauge
+    $script:HomeGauge.Bounds  = New-Object System.Drawing.Rectangle (S 12), (S 4), $gaugeW, ($heroH - (S 8))
+    $script:HomeGauge.BackColor = [System.Drawing.Color]::Transparent
+    $script:HomeGauge.Caption = 'ГОТОВНОСТЬ'
+    $script:HomeGauge.Sub     = 'профиль модулей'
+    $st = Get-OptimizationStats
+    $script:HomeGauge.Value   = $st.Score
+    $hero.Controls.Add($script:HomeGauge)
+
+    $liveHead = New-Object System.Windows.Forms.Label
+    $liveHead.Text      = 'НАГРУЗКА В РЕАЛЬНОМ ВРЕМЕНИ'
+    $liveHead.Font      = [RustSuite.Theme]::FHead
+    $liveHead.ForeColor = [RustSuite.Theme]::Muted
+    $liveHead.BackColor = [System.Drawing.Color]::Transparent
+    $liveHead.AutoSize  = $false
+    $liveHead.Bounds    = New-Object System.Drawing.Rectangle $rightX, (S 14), $rightW, (S 16)
+    $hero.Controls.Add($liveHead)
+
+    $script:HomeCpuVal = New-Object System.Windows.Forms.Label
+    $script:HomeCpuVal.Text      = 'CPU  —'
+    $script:HomeCpuVal.Font      = [RustSuite.Theme]::FName
+    $script:HomeCpuVal.ForeColor = [RustSuite.Theme]::TextC
+    $script:HomeCpuVal.BackColor = [System.Drawing.Color]::Transparent
+    $script:HomeCpuVal.AutoSize  = $false
+    $script:HomeCpuVal.Bounds    = New-Object System.Drawing.Rectangle $rightX, (S 32), $rightW, (S 20)
+    $hero.Controls.Add($script:HomeCpuVal)
+
+    $script:HomeSpark = New-Object RustSuite.Sparkline
+    $script:HomeSpark.Bounds    = New-Object System.Drawing.Rectangle $rightX, (S 56), $rightW, (S 62)
+    $script:HomeSpark.BackColor = [System.Drawing.Color]::Transparent
+    $script:HomeSpark.LineColor = [RustSuite.Theme]::AccentLt
+    $hero.Controls.Add($script:HomeSpark)
+
+    $script:HomeRamVal = New-Object System.Windows.Forms.Label
+    $script:HomeRamVal.Text      = 'ОЗУ  —'
+    $script:HomeRamVal.Font      = [RustSuite.Theme]::FSmall
+    $script:HomeRamVal.ForeColor = [RustSuite.Theme]::Muted
+    $script:HomeRamVal.BackColor = [System.Drawing.Color]::Transparent
+    $script:HomeRamVal.AutoSize  = $false
+    $script:HomeRamVal.Bounds    = New-Object System.Drawing.Rectangle $rightX, (S 122), $rightW, (S 16)
+    $hero.Controls.Add($script:HomeRamVal)
+
+    $script:HomeStatusLbl = New-Object System.Windows.Forms.Label
+    $script:HomeStatusLbl.Text      = ''
+    $script:HomeStatusLbl.Font      = [RustSuite.Theme]::FSmall
+    $script:HomeStatusLbl.ForeColor = [RustSuite.Theme]::Muted
+    $script:HomeStatusLbl.BackColor = [System.Drawing.Color]::Transparent
+    $script:HomeStatusLbl.AutoSize  = $false
+    $script:HomeStatusLbl.Bounds    = New-Object System.Drawing.Rectangle $rightX, (S 144), $rightW, (S 40)
+    $hero.Controls.Add($script:HomeStatusLbl)
+
+    $null = New-Object RustSuite.SlideTween -ArgumentList $hero, ($y + (S 22)), $y, 0, 300
+    $y += $heroH + (S 10)
+
+    # ---------- Карточки-показатели ----------
+    $gap   = S 8
+    $cw    = [int](($w - ($gap * 2)) / 3)
+    if ($cw -lt (S 96)) { $cw = [int](($w - $gap) / 2) }
+    $cardH = S 76
+    $script:HomeCards = @{}
+    $cards = @(
+        @{ Key = 'modules'; Label = 'МОДУЛИ'; Value = ('{0} / {1}' -f $st.On, $st.Total); Hint = 'включено сейчас';  Accent = [RustSuite.Theme]::Accent },
+        @{ Key = 'disk';    Label = 'СВОБОДНО'; Value = '—'; Hint = 'на системном диске'; Accent = [RustSuite.Theme]::Secondary },
+        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
+    )
+    $ci = 0
+    foreach ($cd in $cards) {
+        $card = New-Object RustSuite.StatCard
+        $card.Label   = [string]$cd.Label
+        $card.Value   = [string]$cd.Value
+        $card.Hint    = [string]$cd.Hint
+        $card.AccentC = [System.Drawing.Color]$cd.Accent
+        $x = ($ci % 3) * ($cw + $gap)
+        if ($cw -lt (S 96)) { $x = ($ci % 2) * ($cw + $gap) }
+        $cy = $y + [int]([Math]::Floor($ci / $(if ($cw -lt (S 96)) { 2 } else { 3 })) * ($cardH + $gap))
+        $card.Bounds = New-Object System.Drawing.Rectangle $x, $cy, $cw, $cardH
+        $script:HomeCards[$cd.Key] = $card
+        $script:RowHost.Controls.Add($card)
+        $null = New-Object RustSuite.SlideTween -ArgumentList $card, ($cy + (S 12)), $cy, (80 + $ci * 40), 260
+        $ci = $ci + 1
+    }
+    $rows = [int][Math]::Ceiling($ci / $(if ($cw -lt (S 96)) { 2 } else { 3 }))
+    $y += ($rows * ($cardH + $gap)) + (S 4)
+
+    # ---------- Быстрые действия ----------
+    $actHead = New-Object System.Windows.Forms.Label
+    $actHead.Text      = 'БЫСТРЫЕ ДЕЙСТВИЯ'
+    $actHead.Font      = [RustSuite.Theme]::FHead
+    $actHead.ForeColor = [RustSuite.Theme]::Muted
+    $actHead.BackColor = [System.Drawing.Color]::Transparent
+    $actHead.AutoSize  = $false
+    $actHead.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($actHead)
+    $y += S 24
+
+    $half = [int](($w - (S 8)) / 2)
+    $bw   = $half
+    $bh   = S 40
+    $buttons = @(
+        @{ Text = '✓  БЕЗОПАСНЫЙ ПРОФИЛЬ'; X = 0; Y = 0; Style = 'Primary'; Action = { Set-ProfileFromHome $false } },
+        @{ Text = '⚡  МАКСИМУМ'; X = ($half + (S 8)); Y = 0; Style = 'Ghost'; Action = { Set-ProfileFromHome $true } },
+        @{ Text = '▶  ОПТИМИЗИРОВАТЬ СЕЙЧАС'; X = 0; Y = ($bh + (S 8)); Style = 'Primary'; Action = { Start-OptimizationFromHome } },
+        @{ Text = '↩  ОТКАТИТЬ ИЗМЕНЕНИЯ'; X = ($half + (S 8)); Y = ($bh + (S 8)); Style = 'Ghost'; Action = { Start-RollbackFromHome } },
+        @{ Text = '◈  ДИАГНОСТИКА WINDOWS'; X = 0; Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'repair' } },
+        @{ Text = '◐  ТЕМЫ И НАСТРОЙКИ'; X = ($half + (S 8)); Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'settings' } }
+    )
+    foreach ($bd in $buttons) {
+        $b = New-Object RustSuite.FlatButton
+        $b.Style  = [string]$bd.Style
+        $b.Text   = [string]$bd.Text
+        $b.Font   = [RustSuite.Theme]::FSmall
+        $b.Bounds = New-Object System.Drawing.Rectangle ([int]$bd.X), ($y + [int]$bd.Y), $bw, $bh
+        $b.Add_Click($bd.Action)
+        $script:RowHost.Controls.Add($b)
+    }
+    $y += (($bh + (S 8)) * 3) + (S 4)
+
+    # ---------- Пояснение ----------
+    $note = New-Object System.Windows.Forms.Label
+    $note.Text = 'Оценка готовности — доля включённых модулей от общего числа. ' +
+                 '«БЕЗОПАСНЫЙ ПРОФИЛЬ» оставляет только проверенные обратимые твики; «МАКСИМУМ» включает всё, включая помеченные ●. ' +
+                 'Перед применением создаётся точка восстановления, а «ОТКАТ» возвращает прежние значения реестра и cfg.'
+    $note.Font      = [RustSuite.Theme]::FSmall
+    $note.ForeColor = [RustSuite.Theme]::Muted
+    $note.BackColor = [System.Drawing.Color]::Transparent
+    $note.AutoSize  = $false
+    $note.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 68)
+    $script:RowHost.Controls.Add($note)
+    $y += S 78
+
+    $script:RowHost.AutoScrollMinSize = New-Object System.Drawing.Size 0, $y
+    Update-HomeLive
+}
+
+# ============================================================
 #  БЫСТРЫЕ ПРОВЕРКИ (без интерфейса)
 # ============================================================
 if ($SelfTest) {
@@ -4837,7 +5689,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -4873,6 +5725,21 @@ if ($SelfTest) {
                     'thumbcache', 'winsxs', 'oldwindows', 'prefetchclean', 'eventlogs') {
         if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
             Write-Host ("MISSING CLEANUP TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Дополнительные безопасные твики v5.0
+    foreach ($id in 'gamebar', 'widgets', 'copilot', 'recall', 'suggestions',
+                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ("MISSING SAFE TWEAK: " + $id); $fail++
+        }
+    }
+
+    # Панель «ОБЗОР» и её живые контролы доступны
+    foreach ($fn in 'Get-OptimizationStats', 'Get-OptimizationScore', 'Update-HomeLive', 'Show-HomePanel') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING DASHBOARD FUNCTION: ' + $fn); $fail++
         }
     }
 
@@ -5093,7 +5960,9 @@ $script:Themes = @(
     @{ Name='ARCTIC';      Bg=[System.Drawing.Color]::FromArgb(10,16,24); Panel=[System.Drawing.Color]::FromArgb(16,24,32); Card=[System.Drawing.Color]::FromArgb(22,34,44); CardHover=[System.Drawing.Color]::FromArgb(30,46,58); Border=[System.Drawing.Color]::FromArgb(58,86,104); Accent=[System.Drawing.Color]::FromArgb(90,200,255); AccentLt=[System.Drawing.Color]::FromArgb(150,230,255); Secondary=[System.Drawing.Color]::FromArgb(200,244,255); Glow=[System.Drawing.Color]::FromArgb(42,124,160); TextC=[System.Drawing.Color]::FromArgb(240,250,255); Muted=[System.Drawing.Color]::FromArgb(146,168,180); Ok=[System.Drawing.Color]::FromArgb(100,224,160); Warn=[System.Drawing.Color]::FromArgb(255,210,100);  Err=[System.Drawing.Color]::FromArgb(255,110,130); Field=[System.Drawing.Color]::FromArgb(12,18,24) },
     @{ Name='SAKURA';      Bg=[System.Drawing.Color]::FromArgb(24,10,18); Panel=[System.Drawing.Color]::FromArgb(36,16,28); Card=[System.Drawing.Color]::FromArgb(48,22,38); CardHover=[System.Drawing.Color]::FromArgb(62,30,48); Border=[System.Drawing.Color]::FromArgb(112,64,90); Accent=[System.Drawing.Color]::FromArgb(255,92,168); AccentLt=[System.Drawing.Color]::FromArgb(255,154,204); Secondary=[System.Drawing.Color]::FromArgb(255,200,160); Glow=[System.Drawing.Color]::FromArgb(176,38,110); TextC=[System.Drawing.Color]::FromArgb(255,240,246); Muted=[System.Drawing.Color]::FromArgb(188,142,166); Ok=[System.Drawing.Color]::FromArgb(120,216,144); Warn=[System.Drawing.Color]::FromArgb(255,200,100);  Err=[System.Drawing.Color]::FromArgb(255,92,120);  Field=[System.Drawing.Color]::FromArgb(30,12,22) },
     @{ Name='OBSIDIAN';    Bg=[System.Drawing.Color]::FromArgb(10,10,12); Panel=[System.Drawing.Color]::FromArgb(18,18,22); Card=[System.Drawing.Color]::FromArgb(26,26,32); CardHover=[System.Drawing.Color]::FromArgb(36,36,44); Border=[System.Drawing.Color]::FromArgb(60,60,72);  Accent=[System.Drawing.Color]::FromArgb(180,180,200); AccentLt=[System.Drawing.Color]::FromArgb(230,230,240); Secondary=[System.Drawing.Color]::FromArgb(140,140,160); Glow=[System.Drawing.Color]::FromArgb(80,80,94); TextC=[System.Drawing.Color]::FromArgb(248,248,250); Muted=[System.Drawing.Color]::FromArgb(152,152,166); Ok=[System.Drawing.Color]::FromArgb(140,216,144); Warn=[System.Drawing.Color]::FromArgb(216,192,112); Err=[System.Drawing.Color]::FromArgb(224,104,120); Field=[System.Drawing.Color]::FromArgb(14,14,18) },
-    @{ Name='TOXIC';       Bg=[System.Drawing.Color]::FromArgb(10,16,6);  Panel=[System.Drawing.Color]::FromArgb(18,26,12); Card=[System.Drawing.Color]::FromArgb(26,36,18); CardHover=[System.Drawing.Color]::FromArgb(36,48,26); Border=[System.Drawing.Color]::FromArgb(74,100,42);  Accent=[System.Drawing.Color]::FromArgb(168,230,60); AccentLt=[System.Drawing.Color]::FromArgb(212,255,100); Secondary=[System.Drawing.Color]::FromArgb(240,255,60); Glow=[System.Drawing.Color]::FromArgb(90,140,30); TextC=[System.Drawing.Color]::FromArgb(246,255,234); Muted=[System.Drawing.Color]::FromArgb(160,180,138); Ok=[System.Drawing.Color]::FromArgb(140,255,100); Warn=[System.Drawing.Color]::FromArgb(255,230,60);   Err=[System.Drawing.Color]::FromArgb(255,92,100);  Field=[System.Drawing.Color]::FromArgb(14,20,8) }
+    @{ Name='TOXIC';       Bg=[System.Drawing.Color]::FromArgb(10,16,6);  Panel=[System.Drawing.Color]::FromArgb(18,26,12); Card=[System.Drawing.Color]::FromArgb(26,36,18); CardHover=[System.Drawing.Color]::FromArgb(36,48,26); Border=[System.Drawing.Color]::FromArgb(74,100,42);  Accent=[System.Drawing.Color]::FromArgb(168,230,60); AccentLt=[System.Drawing.Color]::FromArgb(212,255,100); Secondary=[System.Drawing.Color]::FromArgb(240,255,60); Glow=[System.Drawing.Color]::FromArgb(90,140,30); TextC=[System.Drawing.Color]::FromArgb(246,255,234); Muted=[System.Drawing.Color]::FromArgb(160,180,138); Ok=[System.Drawing.Color]::FromArgb(140,255,100); Warn=[System.Drawing.Color]::FromArgb(255,230,60);   Err=[System.Drawing.Color]::FromArgb(255,92,100);  Field=[System.Drawing.Color]::FromArgb(14,20,8) },
+    @{ Name='AURORA';      Bg=[System.Drawing.Color]::FromArgb(8,14,22);  Panel=[System.Drawing.Color]::FromArgb(12,22,34); Card=[System.Drawing.Color]::FromArgb(18,32,48); CardHover=[System.Drawing.Color]::FromArgb(26,44,64); Border=[System.Drawing.Color]::FromArgb(46,86,110); Accent=[System.Drawing.Color]::FromArgb(64,224,200); AccentLt=[System.Drawing.Color]::FromArgb(120,255,232); Secondary=[System.Drawing.Color]::FromArgb(150,120,255); Glow=[System.Drawing.Color]::FromArgb(30,140,130); TextC=[System.Drawing.Color]::FromArgb(232,255,252); Muted=[System.Drawing.Color]::FromArgb(140,170,176); Ok=[System.Drawing.Color]::FromArgb(110,235,160); Warn=[System.Drawing.Color]::FromArgb(250,210,90);   Err=[System.Drawing.Color]::FromArgb(255,110,140); Field=[System.Drawing.Color]::FromArgb(10,18,26) },
+    @{ Name='NEON NOIR';   Bg=[System.Drawing.Color]::FromArgb(8,8,12);   Panel=[System.Drawing.Color]::FromArgb(14,14,22); Card=[System.Drawing.Color]::FromArgb(20,20,32); CardHover=[System.Drawing.Color]::FromArgb(30,30,46); Border=[System.Drawing.Color]::FromArgb(56,50,96);  Accent=[System.Drawing.Color]::FromArgb(255,54,140); AccentLt=[System.Drawing.Color]::FromArgb(255,120,190); Secondary=[System.Drawing.Color]::FromArgb(60,230,255); Glow=[System.Drawing.Color]::FromArgb(120,24,90); TextC=[System.Drawing.Color]::FromArgb(245,245,252); Muted=[System.Drawing.Color]::FromArgb(150,148,168); Ok=[System.Drawing.Color]::FromArgb(100,230,170); Warn=[System.Drawing.Color]::FromArgb(250,200,80);   Err=[System.Drawing.Color]::FromArgb(255,90,120);  Field=[System.Drawing.Color]::FromArgb(12,12,18) }
 )
 
 $script:ThemeName = 'PURPLE RUSH'
@@ -5915,7 +6784,7 @@ $footer.Add_Paint({
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
     try {
-        $hint = 'Ctrl+1…8 — разделы    ·    Ctrl+R — обновить статистику'
+        $hint = 'Ctrl+1…9 — разделы    ·    Ctrl+R — обновить статистику'
         $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
         [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
             [RustSuite.Theme]::FSmall, $hr,
@@ -6018,6 +6887,7 @@ $navTop.AutoScroll = $true
 $navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
+    @{ Id = 'home';    Glyph = '◉'; Title = 'ОБЗОР';    Sub = 'оценка и быстрые действия' },
     @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
     @{ Id = 'net';     Glyph = '↔'; Title = 'СЕТЬ';     Sub = 'пинг и пакеты' },
     @{ Id = 'rust';    Glyph = '▶'; Title = 'RUST';     Sub = 'профиль игры' },
@@ -6456,7 +7326,7 @@ function Show-BindsPanel {
 
 function Show-Group {
     param([string]$gid)
-    if (-not $gid) { $gid = 'sys' }
+    if (-not $gid) { $gid = 'home' }
     $script:ActiveGroup = $gid
 
     # Останавливаем таймеры страниц, иначе они держат удалённые контролы.
@@ -6478,6 +7348,13 @@ function Show-Group {
     $script:PicturePreviewAfter = $null
     $script:PictureTiles        = @()
     $script:PictureDescLabel    = $null
+    $script:HomeGauge           = $null
+    $script:HomeSpark           = $null
+    $script:HomeCpuVal          = $null
+    $script:HomeRamVal          = $null
+    $script:HomeStatusLbl       = $null
+    $script:HomeHero            = $null
+    $script:HomeCards           = @{}
 
     foreach ($k in $script:NavButtons.Keys) { $script:NavButtons[$k].Selected = ($k -eq $gid) }
     foreach ($c in @($script:RowHost.Controls)) { $c.Dispose() }
@@ -6490,6 +7367,7 @@ function Show-Group {
     try { $script:RowHost.SuspendLayout() } catch {}
 
     try {
+        if ($gid -eq 'home') { Show-HomePanel; return }
         if ($gid -eq 'binds') { Show-BindsPanel; return }
         if ($gid -eq 'picture') { Show-PicturePanel; return }
         if ($gid -eq 'repair') { Show-RepairPanel; return }
@@ -7917,6 +8795,11 @@ function Update-Stats {
         }
     }
     if ($script:Header -and -not $script:Header.IsDisposed) { $script:Header.Invalidate() }
+
+    # Новая панель «ОБЗОР» получает те же живые значения.
+    if (Get-Command Update-HomeLive -ErrorAction SilentlyContinue) {
+        Update-HomeLive -Cpu $cpu -Ram $ram -DiskFreeGb $diskFreeGb -DiskFreePct $diskFreePct
+    }
 }
 
 # ---------- Запуск Rust ----------
@@ -8108,7 +8991,7 @@ $form.Add_KeyDown({
         if (-not $e.Control) { return }
         $key = [int]$e.KeyCode
         $first = [int][System.Windows.Forms.Keys]::D1
-        $last  = [int][System.Windows.Forms.Keys]::D8
+        $last  = [int][System.Windows.Forms.Keys]::D9
         if ($key -ge $first -and $key -le $last) {
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
@@ -8177,7 +9060,7 @@ $form.Add_Shown({
         } catch {}
     }
 
-    Show-Group 'sys'
+    Show-Group 'home'
     Update-Stats
 
     Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
@@ -8297,6 +9180,32 @@ $form.Add_Shown({
                         Write-Host 'PICTURE OK'
                     }
                     11 {
+                        Show-Group 'home'
+                        if (-not $script:HomeGauge -or $script:HomeGauge.IsDisposed) { throw 'HOME GAUGE MISSING' }
+                        if (-not $script:HomeSpark -or $script:HomeSpark.IsDisposed) { throw 'HOME SPARKLINE MISSING' }
+                        $cards = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.StatCard] })
+                        if ($cards.Count -lt 3) { throw 'HOME STAT CARDS MISSING' }
+                        Update-Stats
+                        $score = Get-OptimizationScore
+                        if ($score -le 0) { throw 'HOME SCORE IS ZERO' }
+                        Write-Host ('HOME score=' + $score + ' cards=' + $cards.Count +
+                                    ' gauge=' + $script:HomeGauge.Width + 'x' + $script:HomeGauge.Height +
+                                    ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
+                        Write-Host 'HOME OK'
+                        if ($env:RUSTOPT_SHOT) {
+                            try {
+                                $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
+                    }
+                    12 {
                         Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'

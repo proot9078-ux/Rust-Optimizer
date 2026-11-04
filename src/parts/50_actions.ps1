@@ -275,6 +275,11 @@ function Update-Stats {
         }
     }
     if ($script:Header -and -not $script:Header.IsDisposed) { $script:Header.Invalidate() }
+
+    # Новая панель «ОБЗОР» получает те же живые значения.
+    if (Get-Command Update-HomeLive -ErrorAction SilentlyContinue) {
+        Update-HomeLive -Cpu $cpu -Ram $ram -DiskFreeGb $diskFreeGb -DiskFreePct $diskFreePct
+    }
 }
 
 # ---------- Запуск Rust ----------
@@ -466,7 +471,7 @@ $form.Add_KeyDown({
         if (-not $e.Control) { return }
         $key = [int]$e.KeyCode
         $first = [int][System.Windows.Forms.Keys]::D1
-        $last  = [int][System.Windows.Forms.Keys]::D8
+        $last  = [int][System.Windows.Forms.Keys]::D9
         if ($key -ge $first -and $key -le $last) {
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
@@ -535,7 +540,7 @@ $form.Add_Shown({
         } catch {}
     }
 
-    Show-Group 'sys'
+    Show-Group 'home'
     Update-Stats
 
     Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
@@ -655,6 +660,32 @@ $form.Add_Shown({
                         Write-Host 'PICTURE OK'
                     }
                     11 {
+                        Show-Group 'home'
+                        if (-not $script:HomeGauge -or $script:HomeGauge.IsDisposed) { throw 'HOME GAUGE MISSING' }
+                        if (-not $script:HomeSpark -or $script:HomeSpark.IsDisposed) { throw 'HOME SPARKLINE MISSING' }
+                        $cards = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.StatCard] })
+                        if ($cards.Count -lt 3) { throw 'HOME STAT CARDS MISSING' }
+                        Update-Stats
+                        $score = Get-OptimizationScore
+                        if ($score -le 0) { throw 'HOME SCORE IS ZERO' }
+                        Write-Host ('HOME score=' + $score + ' cards=' + $cards.Count +
+                                    ' gauge=' + $script:HomeGauge.Width + 'x' + $script:HomeGauge.Height +
+                                    ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
+                        Write-Host 'HOME OK'
+                        if ($env:RUSTOPT_SHOT) {
+                            try {
+                                $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
+                    }
+                    12 {
                         Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'

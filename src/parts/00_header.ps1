@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.2
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.0
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '4.2'
+$script:AppVersion   = '5.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -21,7 +21,7 @@ $script:Enabled      = @{}
 $script:RustExe      = $null
 $script:SteamPath    = $null
 $script:RustCfgDir   = $null
-$script:ActiveGroup  = 'sys'
+$script:ActiveGroup  = 'home'
 $script:SC           = 1.0
 $script:Busy         = $false
 $script:Progress     = $null
