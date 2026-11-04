@@ -459,24 +459,81 @@ $btnScan.Add_Click({
     Start-HealthScan
 })
 
+# ---------- Горячие клавиши ----------
+$form.Add_KeyDown({
+    param($s, $e)
+    try {
+        if (-not $e.Control) { return }
+        $key = [int]$e.KeyCode
+        $first = [int][System.Windows.Forms.Keys]::D1
+        $last  = [int][System.Windows.Forms.Keys]::D8
+        if ($key -ge $first -and $key -le $last) {
+            $idx = $key - $first
+            if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
+                Show-Group $script:Groups[$idx].Id
+                $e.Handled = $true
+                $e.SuppressKeyPress = $true
+                return
+            }
+        }
+        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::R) {
+            Update-Stats
+            Set-Status 'Статистика обновлена' '#8B949E'
+            $e.Handled = $true
+            $e.SuppressKeyPress = $true
+        }
+    } catch {}
+})
+
 # ---------- Жизненный цикл ----------
 $form.Add_FormClosing({
     param($s, $e)
+    if ($script:Closing) { return }
     if ($script:Busy -and -not $script:TestUi) {
         $a = [System.Windows.Forms.MessageBox]::Show(
             'Оптимизация ещё выполняется. Прервать?', 'PURPLE RUSH', 'YesNo', 'Warning')
         if ($a -ne 'Yes') { $e.Cancel = $true; return }
     }
+    $script:Closing = $true
     try { $script:StatsTimer.Stop() } catch {}
     try { $script:LaunchTimer.Stop() } catch {}
+    try { $script:ProbeTimer.Stop() } catch {}
+    try { $script:CloseTimer.Stop() } catch {}
+    try { if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose() } } catch {}
+    try { if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose() } } catch {}
     try { if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose() } } catch {}
     if ($script:State['TimerOn']) { try { [RustSuite.Native]::TimerStop() } catch {} }
+
+    # Запоминаем размер и позицию окна для следующего запуска.
+    if (-not $script:TestUi -and -not $script:SelfTest) {
+        try {
+            $script:State['WinW']   = [int]$form.Width
+            $script:State['WinH']   = [int]$form.Height
+            $script:State['WinX']   = [int]$form.Left
+            $script:State['WinY']   = [int]$form.Top
+            $script:State['WinPos'] = $true
+            Save-State
+        } catch {}
+    }
 })
 
 $form.Add_Shown({
     [void][RustSuite.Native]::DarkTitle($form)
     [void][RustSuite.Native]::DarkScroll($script:RowHost)
     [void][RustSuite.Native]::DarkScroll($script:LogBox)
+
+    # Ярлык с фирменной иконкой создаётся один раз при запуске .bat.
+    if (-not $script:TestUi) {
+        try {
+            $hadShortcut = $false
+            $desktop = [Environment]::GetFolderPath('Desktop')
+            if ($desktop) { $hadShortcut = Test-Path -LiteralPath (Join-Path $desktop 'PURPLE RUSH.lnk') }
+            $script:ShortcutPath = Install-AppShortcut
+            if ($script:ShortcutPath -and -not $hadShortcut) {
+                Write-Log ('Ярлык создан на рабочем столе: ' + $script:ShortcutPath) 'ok'
+            }
+        } catch {}
+    }
 
     Show-Group 'sys'
     Update-Stats
@@ -556,6 +613,45 @@ $form.Add_Shown({
                         if ($script:PictureStatusLabel -and $script:PictureStatusLabel.Text.Length -lt 3) {
                             throw 'PICTURE STATUS MISSING'
                         }
+                        try { $script:RowHost.PerformLayout() } catch {}
+                        try { $script:ContentScrollStrip.Sync() } catch {}
+                        Write-Host ('SCROLL content strip=' + $script:ContentScrollStrip.Visible +
+                                    ' height=' + $script:RowHost.ClientSize.Height +
+                                    ' hscroll=' + $script:RowHost.HorizontalScroll.Visible)
+                        if (-not $script:ContentScrollStrip.Visible) { throw 'CONTENT SCROLL STRIP MISSING' }
+                        if ($script:RowHost.HorizontalScroll.Visible) { throw 'CONTENT HORIZONTAL SCROLL PRESENT' }
+
+                        # Стрелка «вниз» на нашей полосе действительно листает страницу.
+                        $before = [int]$script:RowHost.VerticalScroll.Value
+                        $mi = [System.Windows.Forms.Control].GetMethod('OnMouseDown',
+                            [System.Reflection.BindingFlags]'Instance,NonPublic')
+                        $me = New-Object System.Windows.Forms.MouseEventArgs(
+                            [System.Windows.Forms.MouseButtons]::Left, 1,
+                            [int]($script:ContentScrollStrip.Width / 2),
+                            [int]($script:ContentScrollStrip.Height - 5), 0)
+                        $mi.Invoke($script:ContentScrollStrip, @($me.PSObject.BaseObject)) | Out-Null
+                        $after = [int]$script:RowHost.VerticalScroll.Value
+                        $script:RowHost.ScrollToTop()
+                        if ($after -le $before) { throw 'CONTENT SCROLL STRIP NOT WORKING' }
+
+                        $origSize = $form.Size
+                        try {
+                            $form.Size = $form.MinimumSize
+                            $form.PerformLayout()
+                            try { $script:NavTopPanel.PerformLayout() } catch {}
+                            try { $script:NavScrollStrip.Sync() } catch {}
+                            Write-Host ('SCROLL nav strip=' + $script:NavScrollStrip.Visible +
+                                        ' height=' + $script:NavTopPanel.ClientSize.Height +
+                                        ' max=' + $script:NavTopPanel.VerticalScroll.Maximum)
+                            if (-not $script:NavScrollStrip.Visible) { throw 'NAV SCROLL STRIP MISSING' }
+                            try { $script:NavTopPanel.AutoScrollPosition = New-Object System.Drawing.Point 0, 60 } catch {}
+                            if ([int]$script:NavTopPanel.VerticalScroll.Value -le 0) { throw 'NAV SCROLL NOT WORKING' }
+                        } finally {
+                            $form.Size = $origSize
+                            $form.PerformLayout()
+                            try { $script:NavTopPanel.AutoScrollPosition = New-Object System.Drawing.Point 0, 0 } catch {}
+                        }
+                        $form.Refresh()
                         Write-Host 'PICTURE OK'
                     }
                     11 {
@@ -586,4 +682,22 @@ $form.Add_Shown({
     Write-Log ('Ошибка интерфейса: ' + $msg) 'err'
 })
 
+# Ошибка вне UI-потока не должна приводить к молчаливому падению:
+# пишем её в журнал, чтобы причина осталась видимой.
+try {
+    [AppDomain]::CurrentDomain.add_UnhandledException({
+        param($s, $e)
+        $msg = ''
+        if ($e -and $e.ExceptionObject) { $msg = [string]$e.ExceptionObject.Message }
+        Write-Log ('Критическая ошибка: ' + $msg) 'err'
+    })
+} catch {}
+
 [System.Windows.Forms.Application]::Run($form)
+
+try {
+    if ($script:SingleInstance) {
+        $script:SingleInstance.ReleaseMutex()
+        $script:SingleInstance.Dispose()
+    }
+} catch {}

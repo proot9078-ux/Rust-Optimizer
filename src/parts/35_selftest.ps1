@@ -24,13 +24,20 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
                 Write-Host ("MISSING CONTROL: " + $tn); $fail++
             }
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
+    }
+
+    # Ярлык и иконка
+    foreach ($fn in 'Get-AppLauncherPath', 'Get-AppIconPath', 'Install-AppShortcut', 'Set-AppWindowIcon') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING APP FUNCTION: ' + $fn); $fail++
+        }
     }
 
     # Новые движки очистки, ремонта и диагностики доступны

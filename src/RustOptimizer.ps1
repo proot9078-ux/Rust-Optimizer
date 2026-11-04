@@ -1,15 +1,15 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.1
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.2
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
-param([switch]$SelfTest, [switch]$TestUi)
+param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '4.1'
+$script:AppVersion   = '4.2'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -43,6 +43,8 @@ $script:RustState    = $null
 $script:Header       = $null
 $script:AutoClose    = $true
 $script:CloseTimer   = $null
+$script:Closing      = $false
+$script:ShortcutPath = $null
 
 New-Item -ItemType Directory -Force -Path $script:Root, $script:RegBackup, $script:RustBackup | Out-Null
 
@@ -383,6 +385,144 @@ function Merge-CfgFile {
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     [IO.File]::WriteAllLines($Path, $keep, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# ============================================================
+#  ЯРЛЫК НА РАБОЧЕМ СТОЛЕ, ИКОНКА И ЗАЩИТА ОТ ДВОЙНОГО ЗАПУСКА
+#  Запуск .bat создаёт ярлык один раз и дальше не трогает его,
+#  если он уже указывает на актуальный лаунчер.
+# ============================================================
+
+function Get-AppLauncherPath {
+    $candidates = @()
+    if ($env:RUSTOPT_LAUNCHER) { $candidates += [string]$env:RUSTOPT_LAUNCHER }
+    try {
+        if ($PSScriptRoot) {
+            $candidates += (Join-Path (Split-Path -Parent $PSScriptRoot) 'RustOptimizer.bat')
+            $candidates += (Join-Path $PSScriptRoot 'RustOptimizer.bat')
+        }
+    } catch {}
+    foreach ($c in $candidates) {
+        try {
+            if ($c -and (Test-Path -LiteralPath $c)) {
+                return (Resolve-Path -LiteralPath $c).Path
+            }
+        } catch {}
+    }
+    return $null
+}
+
+function Get-AppIconPath {
+    try {
+        if ($PSScriptRoot) {
+            $p = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\rust-optimizer.ico'
+            if (Test-Path -LiteralPath $p) { return (Resolve-Path -LiteralPath $p).Path }
+            $p2 = Join-Path $PSScriptRoot 'assets\rust-optimizer.ico'
+            if (Test-Path -LiteralPath $p2) { return (Resolve-Path -LiteralPath $p2).Path }
+        }
+    } catch {}
+    return $null
+}
+
+# Создаёт (или обновляет) ярлык PURPLE RUSH на рабочем столе.
+# Возвращает путь к .lnk либо $null, если создать нельзя.
+function Install-AppShortcut {
+    param([switch]$Force)
+    try {
+        $bat = Get-AppLauncherPath
+        if (-not $bat) { return $null }
+        $ico = Get-AppIconPath
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        if (-not $desktop) { return $null }
+        if (-not (Test-Path -LiteralPath $desktop)) { return $null }
+
+        $lnk  = Join-Path $desktop 'PURPLE RUSH.lnk'
+        $root = Split-Path -Parent $bat
+        $iconLoc = if ($ico) { $ico + ',0' } else { $null }
+
+        if ((Test-Path -LiteralPath $lnk) -and -not $Force) {
+            try {
+                $check = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+                $sameTarget = ($check.TargetPath -eq $bat)
+                $sameIcon = (-not $iconLoc) -or ($check.IconLocation -eq $iconLoc)
+                if ($sameTarget -and $sameIcon) { return $lnk }
+            } catch {}
+        }
+
+        $shell = New-Object -ComObject WScript.Shell
+        $sc = $shell.CreateShortcut($lnk)
+        $sc.TargetPath       = $bat
+        $sc.WorkingDirectory = $root
+        if ($iconLoc) { $sc.IconLocation = $iconLoc }
+        $sc.Description      = 'PURPLE RUSH — RUST PERFORMANCE ENGINE'
+        $sc.WindowStyle      = 1
+        $sc.Save()
+        return $lnk
+    } catch { return $null }
+}
+
+function Set-AppWindowIcon {
+    param($Form)
+    try {
+        if (-not $Form -or $Form.IsDisposed) { return }
+        $ico = Get-AppIconPath
+        if ($ico) {
+            $Form.Icon = New-Object System.Drawing.Icon($ico)
+        }
+    } catch {}
+}
+
+# ---------- Ручное создание ярлыка без запуска интерфейса ----------
+if ($InstallShortcut) {
+    $lnk = Install-AppShortcut -Force
+    if ($lnk) {
+        Write-Host ('OK: ' + $lnk)
+        exit 0
+    }
+    Write-Host 'Не удалось создать ярлык: не найден RustOptimizer.bat или папка рабочего стола.'
+    exit 1
+}
+
+# ---------- Один экземпляр приложения ----------
+# Два одновременно запущенных окна могут мешать друг другу при записи
+# cfg/состояния, поэтому второй запуск просто поднимает уже открытое окно.
+$script:SingleInstance = $null
+if (-not $SelfTest -and -not $TestUi) {
+    try {
+        $mutexName = 'Local\PurpleRush.RustOptimizer.' + $env:USERNAME
+        $mutex = New-Object System.Threading.Mutex($false, $mutexName)
+        $owned = $false
+        try { $owned = $mutex.WaitOne(0, $false) }
+        catch [System.Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) {
+            $activated = $false
+            try {
+                Add-Type -Namespace PurpleRush -Name Win32 -ErrorAction SilentlyContinue -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+                $proc = Get-Process -Name powershell -ErrorAction SilentlyContinue |
+                        Where-Object { $_.MainWindowTitle -like 'PURPLE RUSH*' } |
+                        Select-Object -First 1
+                if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+                    [void][PurpleRush.Win32]::ShowWindow($proc.MainWindowHandle, 9)
+                    [void][PurpleRush.Win32]::SetForegroundWindow($proc.MainWindowHandle)
+                    $activated = $true
+                }
+            } catch {}
+            if (-not $activated) {
+                try {
+                    Add-Type -AssemblyName System.Windows.Forms
+                    [void][System.Windows.Forms.MessageBox]::Show(
+                        'PURPLE RUSH уже запущен. Переключитесь на открытое окно программы.',
+                        'PURPLE RUSH', 'OK', 'Information')
+                } catch {}
+            }
+            try { $mutex.Dispose() } catch {}
+            exit
+        }
+        $script:SingleInstance = $mutex
+    } catch {}
 }
 
 # ============================================================
@@ -3515,6 +3655,278 @@ namespace RustSuite
             _t.Stop();
             try { AutoScrollPosition = new Point(0, 0); } catch { }
         }
+
+        public void ScrollToValue(int v)
+        {
+            _target = Math.Max(0, v);
+            _t.Stop();
+            try { AutoScrollPosition = new Point(0, _target); } catch { }
+        }
+    }
+
+    // Заметная вертикальная полоса прокрутки со стрелками вверх/вниз.
+    // Накладывается поверх штатной полосы целевой панели и работает
+    // с её AutoScrollPosition, поэтому не ломает колесо и клавиатуру.
+    public class ScrollStrip : Control
+    {
+        private readonly Timer _t;
+        private Control _target;
+        private bool _hoverUp, _hoverDown, _hoverThumb;
+        private bool _dragging;
+        private int _dragOffset;
+        private int _arrowH;
+        private bool _syncing;
+
+        public Control Target
+        {
+            get { return _target; }
+            set
+            {
+                _target = value;
+                ScrollableControl sc = _target as ScrollableControl;
+                if (sc != null) { sc.Scroll += delegate { Invalidate(); }; }
+                Visible = false;
+                Sync();
+            }
+        }
+
+        public ScrollStrip()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+            _arrowH = 16;
+            try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
+            _t = new Timer();
+            _t.Interval = 40;
+            _t.Tick += delegate { Sync(); };
+            _t.Start();
+        }
+
+        private ScrollableControl Sc { get { return _target as ScrollableControl; } }
+
+        private int MaxValue
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(0, Sc.VerticalScroll.Maximum - Sc.VerticalScroll.LargeChange + 1); }
+                catch { return 0; }
+            }
+        }
+
+        private int Value
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(0, -Sc.AutoScrollPosition.Y); } catch { return 0; }
+            }
+        }
+
+        private int ContentHeight
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(1, Sc.VerticalScroll.Maximum); } catch { return 1; }
+            }
+        }
+
+        private int ViewHeight
+        {
+            get
+            {
+                if (Sc == null) return 1;
+                try { return Math.Max(1, Sc.ClientSize.Height); } catch { return 1; }
+            }
+        }
+
+        public void Sync()
+        {
+            if (_syncing || Sc == null || Sc.IsDisposed || IsDisposed) return;
+            _syncing = true;
+            try
+            {
+                bool need = false;
+                try { need = Sc.VerticalScroll.Visible && MaxValue > 0; } catch { }
+                if (!need)
+                {
+                    if (Visible) Visible = false;
+                    return;
+                }
+
+                int x, y, h;
+                if (Parent == _target)
+                {
+                    x = Math.Max(0, Sc.ClientSize.Width - Width);
+                    y = -Sc.AutoScrollPosition.Y;
+                    h = Sc.ClientSize.Height;
+                }
+                else
+                {
+                    x = _target.Right - Width;
+                    y = _target.Top;
+                    h = _target.Height;
+                }
+                if (Bounds.X != x || Bounds.Y != y || Bounds.Height != h || Bounds.Width != Width)
+                {
+                    Bounds = new Rectangle(x, y, Width, h);
+                }
+                if (!Visible)
+                {
+                    Visible = true;
+                    BringToFront();
+                }
+                Invalidate();
+            }
+            catch { }
+            finally { _syncing = false; }
+        }
+
+        private int TrackTop { get { return _arrowH + 2; } }
+        private int TrackBottom { get { return Height - _arrowH - 2; } }
+        private int TrackHeight { get { return Math.Max(1, TrackBottom - TrackTop); } }
+
+        private int ThumbHeight()
+        {
+            int h = (int)Math.Round((double)TrackHeight * Math.Min(1.0, (double)ViewHeight / ContentHeight));
+            return Math.Max(24, Math.Min(TrackHeight, h));
+        }
+
+        private Rectangle ThumbRect()
+        {
+            int th = ThumbHeight();
+            int room = TrackHeight - th;
+            int max = MaxValue;
+            int y = TrackTop;
+            if (max > 0 && room > 0)
+            {
+                y += (int)Math.Round((double)room * Math.Min(1.0, (double)Value / max));
+            }
+            return new Rectangle(3, y, Math.Max(4, Width - 6), th);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int w = Width, h = Height;
+            using (SolidBrush b = new SolidBrush(Theme.Field)) g.FillRectangle(b, 0, 0, w, h);
+            DrawArrow(g, _hoverUp ? Theme.AccentLt : Theme.Muted, 0, true);
+            DrawArrow(g, _hoverDown ? Theme.AccentLt : Theme.Muted, h - _arrowH, false);
+
+            Color track = Theme.Lerp(Theme.Field, Theme.Bg, 0.55f);
+            using (SolidBrush tb = new SolidBrush(track)) g.FillRectangle(tb, 3, TrackTop, Math.Max(1, w - 6), TrackHeight);
+
+            Rectangle tr = ThumbRect();
+            Color thumb = (_dragging || _hoverThumb) ? Theme.AccentLt : Theme.Accent;
+            using (GraphicsPath p = RoundRect(tr, 5))
+            using (SolidBrush sb = new SolidBrush(thumb)) g.FillPath(sb, p);
+            using (Pen pen = new Pen(Theme.Lerp(Theme.Accent, Color.White, 0.3f), 1f))
+            {
+                if (tr.Width > 6) g.DrawLine(pen, tr.X + 3, tr.Y + 3, tr.Right - 4, tr.Y + 3);
+            }
+            using (Pen bp = new Pen(Theme.Lerp(Theme.BorderC, Theme.Bg, 0.35f), 1f))
+            {
+                g.DrawRectangle(bp, 0, 0, w - 1, h - 1);
+            }
+        }
+
+        private void DrawArrow(Graphics g, Color c, int top, bool up)
+        {
+            int cx = Width / 2;
+            int cy = top + _arrowH / 2;
+            Point[] p = up
+                ? new Point[] { new Point(cx, cy - 4), new Point(cx - 5, cy + 2), new Point(cx + 5, cy + 2) }
+                : new Point[] { new Point(cx, cy + 4), new Point(cx - 5, cy - 2), new Point(cx + 5, cy - 2) };
+            using (SolidBrush b = new SolidBrush(c)) g.FillPolygon(b, p);
+        }
+
+        private GraphicsPath RoundRect(Rectangle r, int rad)
+        {
+            GraphicsPath p = new GraphicsPath();
+            int d = Math.Max(2, rad * 2);
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        private void ScrollTo(int v)
+        {
+            if (Sc == null) return;
+            int max = MaxValue;
+            if (v < 0) v = 0;
+            if (v > max) v = max;
+            SmoothScrollPanel smooth = Sc as SmoothScrollPanel;
+            if (smooth != null) smooth.ScrollToValue(v);
+            else { try { Sc.AutoScrollPosition = new Point(0, v); } catch { } }
+            Invalidate();
+        }
+
+        private void PageTo(int dir)
+        {
+            int page = Math.Max(40, ViewHeight - 40);
+            ScrollTo(Value + dir * page);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            if (e.Y < _arrowH) { PageTo(-1); return; }
+            if (e.Y >= Height - _arrowH) { PageTo(1); return; }
+            Rectangle tr = ThumbRect();
+            if (tr.Contains(e.Location))
+            {
+                _dragging = true;
+                _dragOffset = e.Y - tr.Y;
+            }
+            else
+            {
+                ScrollTo(Value + (e.Y < tr.Y ? -1 : 1) * Math.Max(40, ViewHeight - 40));
+            }
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            _hoverUp = e.Y < _arrowH;
+            _hoverDown = e.Y >= Height - _arrowH;
+            _hoverThumb = ThumbRect().Contains(e.Location);
+            if (_dragging)
+            {
+                int room = TrackHeight - ThumbHeight();
+                int rel = e.Y - TrackTop - _dragOffset;
+                if (rel < 0) rel = 0;
+                if (rel > room) rel = room;
+                int max = MaxValue;
+                int v = (room <= 0 || max <= 0) ? 0 : (int)Math.Round((double)max * rel / room);
+                ScrollTo(v);
+            }
+            Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            _dragging = false;
+            Invalidate();
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _hoverUp = _hoverDown = _hoverThumb = false;
+            _dragging = false;
+            Invalidate();
+        }
     }
 
     // Колесо мыши над навигацией/панелями тоже прокручивает контент.
@@ -3541,10 +3953,33 @@ namespace RustSuite
             POINT p;
             if (!GetCursorPos(out p)) return false;
             Control c = Control.FromHandle(WindowFromPoint(p));
+
+            // Курсор над нашей полосой — крутим её панель, а не контент.
+            ScrollStrip strip = c as ScrollStrip;
+            if (strip != null && strip.Target != null && strip.Target.IsHandleCreated)
+            {
+                SendMessage(strip.Target.Handle, m.Msg, m.WParam, m.LParam);
+                return true;
+            }
+
             for (Control x = c; x != null; x = x.Parent)
             {
-                if (x is SmoothScrollPanel) return false;
                 if (x is TextBoxBase || x is ListBox || x is ComboBox) return false;
+
+                // Меню разделов и другие AutoScroll-панели листаются своим колесом.
+                ScrollableControl sc = x as ScrollableControl;
+                if (sc != null && sc.AutoScroll && sc != Target)
+                {
+                    bool canScroll = false;
+                    try { canScroll = sc.VerticalScroll.Visible && sc.VerticalScroll.Maximum > sc.VerticalScroll.LargeChange; }
+                    catch { }
+                    if (canScroll)
+                    {
+                        SendMessage(sc.Handle, m.Msg, m.WParam, m.LParam);
+                        return true;
+                    }
+                }
+                if (x is SmoothScrollPanel) return false;
             }
             SendMessage(Target.Handle, m.Msg, m.WParam, m.LParam);
             return true;
@@ -4253,7 +4688,16 @@ namespace RustSuite
 
         public static void DarkTitle(Form f)
         {
-            try { int v = 1; DwmSetWindowAttribute(f.Handle, 20, ref v, 4); DwmSetWindowAttribute(f.Handle, 19, ref v, 4); } catch { }
+            try
+            {
+                int v = 1;
+                DwmSetWindowAttribute(f.Handle, 20, ref v, 4);
+                DwmSetWindowAttribute(f.Handle, 19, ref v, 4);
+                // Windows 11: скруглённые углы окна (на Windows 10 вызов игнорируется).
+                int corner = 2;
+                DwmSetWindowAttribute(f.Handle, 33, ref corner, 4);
+            }
+            catch { }
         }
         public static void DarkScroll(Control c)
         {
@@ -4393,13 +4837,20 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
                 Write-Host ("MISSING CONTROL: " + $tn); $fail++
             }
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
+    }
+
+    # Ярлык и иконка
+    foreach ($fn in 'Get-AppLauncherPath', 'Get-AppIconPath', 'Install-AppShortcut', 'Set-AppWindowIcon') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING APP FUNCTION: ' + $fn); $fail++
+        }
     }
 
     # Новые движки очистки, ремонта и диагностики доступны
@@ -4721,6 +5172,7 @@ function Update-ThemeSurfaces {
     $pairs = @(
         @{ N='FooterPanel';  C='Panel' }, @{ N='NavPanel';      C='Bg' },
         @{ N='NavTopPanel';  C='Bg' },    @{ N='NavBottomPanel'; C='Bg' },
+        @{ N='NavScrollWrap'; C='Bg' },
         @{ N='BodyPanel';    C='Bg' },    @{ N='ContentWrap';   C='Bg' },
         @{ N='RightCol';     C='Panel' }, @{ N='StatsPanel';    C='Panel' },
         @{ N='LogPanel';     C='Panel' }, @{ N='LogHost';       C='Panel' }
@@ -4945,7 +5397,7 @@ function Read-SettingsTemps {
 
 # ---------- Панель настроек ----------
 function Show-SettingsPanel {
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     # Заголовок
@@ -5127,6 +5579,25 @@ function Show-SettingsPanel {
     $script:RowHost.Controls.Add($lblBehHint)
     $y += S 42
 
+    $btnShortcut = New-Object RustSuite.FlatButton
+    $btnShortcut.Style  = 'Ghost'
+    $btnShortcut.Text   = 'СОЗДАТЬ ЯРЛЫК НА РАБОЧЕМ СТОЛЕ'
+    $btnShortcut.Font   = [RustSuite.Theme]::FSmall
+    $btnShortcut.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 30)
+    $btnShortcut.Add_Click({
+        $lnk = Install-AppShortcut -Force
+        if ($lnk) {
+            $script:ShortcutPath = $lnk
+            Set-Status 'Ярлык обновлён на рабочем столе' '#4ECB71'
+            Write-Log ('Ярлык создан: ' + $lnk) 'ok'
+        } else {
+            Set-Status 'Не удалось создать ярлык' '#FF6B62'
+            Write-Log 'Не удалось создать ярлык (нет лаунчера или иконки)' 'warn'
+        }
+    })
+    $script:RowHost.Controls.Add($btnShortcut)
+    $y += S 42
+
     # --- Мониторинг ---
     $lblMon = New-Object System.Windows.Forms.Label
     $lblMon.Text      = 'МОНИТОРИНГ · обновляется автоматически'
@@ -5300,17 +5771,46 @@ if ($script:SC -gt 2.5) { $script:SC = 2.5 }
 function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$winW = [Math]::Min((S 1240), [Math]::Max((S 1020), $area.Width - (S 60)))
-$winH = [Math]::Min((S 820),  [Math]::Max((S 660), $area.Height - (S 70)))
-$form.Size        = New-Object System.Drawing.Size $winW, $winH
-$form.MinimumSize = New-Object System.Drawing.Size (S 1000), (S 640)
-$form.Font        = [RustSuite.Theme]::FSub
+$minW = S 1000
+$minH = S 640
+$winW = [Math]::Min((S 1240), [Math]::Max($minW, $area.Width - (S 60)))
+$winH = [Math]::Min((S 820),  [Math]::Max($minH, $area.Height - (S 70)))
 
-# Handle создаётся выше для чтения DPI, поэтому CenterScreen успевает
+# Восстанавливаем размер прошлой сессии, если он помещается на текущий экран.
+try {
+    $savedW = [int]$script:State['WinW']
+    $savedH = [int]$script:State['WinH']
+    if ($savedW -ge $minW -and $savedH -ge $minH) {
+        $winW = [Math]::Min($savedW, [Math]::Max($minW, $area.Width - (S 20)))
+        $winH = [Math]::Min($savedH, [Math]::Max($minH, $area.Height - (S 20)))
+    }
+} catch {}
+
+$form.Size        = New-Object System.Drawing.Size $winW, $winH
+$form.MinimumSize = New-Object System.Drawing.Size $minW, $minH
+$form.Font        = [RustSuite.Theme]::FSub
+$form.KeyPreview  = $true
+Set-AppWindowIcon $form
+
+# Handle создаётся выше для чтения DPI, поэтому CenterScreen не успевает
 # примениться к размеру по умолчанию. Позиционируем окно вручную уже
 # после установки финального размера — иначе часть окна уходит за экран.
 $px = $area.Left + [int][Math]::Max(0, (($area.Width - $winW) / 2))
 $py = $area.Top  + [int][Math]::Max(0, (($area.Height - $winH) / 2))
+
+# Позицию прошлой сессии используем только если окно остаётся видимым
+# хотя бы на одном мониторе (например, после отключения второго экрана).
+try {
+    if ($script:State['WinPos']) {
+        $sx = [int]$script:State['WinX']
+        $sy = [int]$script:State['WinY']
+        $r  = New-Object System.Drawing.Rectangle $sx, $sy, $winW, $winH
+        foreach ($scr in [System.Windows.Forms.Screen]::AllScreens) {
+            if ($scr.WorkingArea.IntersectsWith($r)) { $px = $sx; $py = $sy; break }
+        }
+    }
+} catch {}
+
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point $px, $py
 
@@ -5340,10 +5840,33 @@ $header.Add_Paint({
         $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST', $f,
             [System.Drawing.Point]::new((S 26), (S 15)), [RustSuite.Theme]::Accent, $tf)
+        $w2 = [System.Windows.Forms.TextRenderer]::MeasureText('PERFORMANCE SUITE', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'PERFORMANCE SUITE', $f,
             [System.Drawing.Point]::new(((S 26) + $w1 + (S 14)), (S 15)), [RustSuite.Theme]::TextC, $tf)
 
-        $sub = 'оптимизация Windows под RUST   ·   v' + $script:AppVersion + '   ·   журнал: ProgramData\RustOptimizer'
+        # Небольшой бейдж версии рядом с заголовком.
+        $vtext = 'v' + $script:AppVersion
+        $vfont = [RustSuite.Theme]::FSmall
+        $vsz   = [System.Windows.Forms.TextRenderer]::MeasureText($vtext, $vfont)
+        $vw    = $vsz.Width + (S 18)
+        $vh    = S 21
+        $vx    = (S 26) + $w1 + (S 14) + $w2 + (S 14)
+        if (($vx + $vw) -lt ($s.Width - (S 230))) {
+            $vrect = [System.Drawing.Rectangle]::new($vx, (S 16), $vw, $vh)
+            $vp    = [RustSuite.Theme]::Round([System.Drawing.RectangleF]$vrect, (S 10))
+            $vbr   = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(45, [RustSuite.Theme]::Accent))
+            $g.FillPath($vbr, $vp)
+            $vbr.Dispose()
+            $vpen  = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(120, [RustSuite.Theme]::AccentLt), 1)
+            $g.DrawPath($vpen, $vp)
+            $vpen.Dispose(); $vp.Dispose()
+            $vcf = [System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor `
+                   [System.Windows.Forms.TextFormatFlags]::VerticalCenter
+            [System.Windows.Forms.TextRenderer]::DrawText($g, $vtext, $vfont, $vrect,
+                [RustSuite.Theme]::AccentLt, $vcf)
+        }
+
+        $sub = 'оптимизация Windows под RUST   ·   журнал: ProgramData\RustOptimizer'
         [System.Windows.Forms.TextRenderer]::DrawText($g, $sub, [RustSuite.Theme]::FSub,
             [System.Drawing.Point]::new((S 28), (S 70)), [RustSuite.Theme]::Muted, $tf)
 
@@ -5374,6 +5897,9 @@ $header.Add_Paint({
         $rrect = [System.Drawing.Rectangle]::new(($s.Width - $cw - (S 26)), (S 50), $cw, (S 20))
         $rf = [System.Windows.Forms.TextFormatFlags]::Right -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $rst, [RustSuite.Theme]::FSmall, $rrect, $rc, $rf)
+        $line = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, [RustSuite.Theme]::Accent)), 1
+        $g.DrawLine($line, 0, ($s.Height - 1), $s.Width, ($s.Height - 1))
+        $line.Dispose()
     } catch {}
 })
 
@@ -5388,6 +5914,14 @@ $footer.Add_Paint({
     $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(34, 40, 52)), 1
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
+    try {
+        $hint = 'Ctrl+1…8 — разделы    ·    Ctrl+R — обновить статистику'
+        $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
+        [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
+            [RustSuite.Theme]::FSmall, $hr,
+            [System.Drawing.Color]::FromArgb(120, [RustSuite.Theme]::Muted),
+            [System.Windows.Forms.TextFormatFlags]::Right)
+    } catch {}
 })
 
 $btnRun = New-Object RustSuite.FlatButton
@@ -5469,6 +6003,11 @@ $nav.RowCount    = 2
 [void]$nav.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Absolute, (S 108))))
 
+$navScrollWrap = New-Object System.Windows.Forms.Panel
+$script:NavScrollWrap = $navScrollWrap
+$navScrollWrap.Dock      = 'Fill'
+$navScrollWrap.BackColor = [RustSuite.Theme]::Bg
+
 $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock       = 'Fill'
@@ -5476,6 +6015,7 @@ $navTop.BackColor  = [RustSuite.Theme]::Bg
 # При минимальной высоте окна восемь пунктов не помещаются —
 # включаем прокрутку вместо наложения на блок «ПРОФИЛИ».
 $navTop.AutoScroll = $true
+$navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
     @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
@@ -5489,6 +6029,10 @@ $script:Groups = @(
 )
 
 $i = 0
+$script:NavTip = New-Object System.Windows.Forms.ToolTip
+$script:NavTip.InitialDelay  = 450
+$script:NavTip.ReshowDelay   = 120
+$script:NavTip.AutoPopDelay  = 6000
 foreach ($grp in $script:Groups) {
     $b = New-Object RustSuite.NavButton
     $b.Text   = $grp.Glyph + '  ' + $grp.Title
@@ -5496,6 +6040,7 @@ foreach ($grp in $script:Groups) {
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
     $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
+    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
     $i = $i + 1
@@ -5527,7 +6072,10 @@ $btnMax.Font   = [RustSuite.Theme]::FSmall
 $btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 56), (S 186), (S 30)
 
 $navBottom.Controls.AddRange(@($lblProfiles, $btnSafe, $btnMax))
-$nav.Controls.Add($navTop, 0, 0)
+$script:NavScrollStrip = New-Object RustSuite.ScrollStrip
+$script:NavScrollStrip.Target = $navTop
+$navScrollWrap.Controls.Add($script:NavScrollStrip)
+$nav.Controls.Add($navScrollWrap, 0, 0)
 $nav.Controls.Add($navBottom, 0, 1)
 
 # ---------- Правая колонка: статистика + журнал ----------
@@ -5667,7 +6215,10 @@ $script:RowHost = New-Object RustSuite.SmoothScrollPanel
 $script:RowHost.Dock       = 'Fill'
 $script:RowHost.BackColor  = [RustSuite.Theme]::Bg
 $script:RowHost.AutoScroll = $true
+$script:ContentScrollStrip = New-Object RustSuite.ScrollStrip
+$script:ContentScrollStrip.Target = $script:RowHost
 $contentWrap.Controls.Add($script:RowHost)
+$contentWrap.Controls.Add($script:ContentScrollStrip)
 try {
     [RustSuite.WheelHub]::Target = $script:RowHost
     [void][System.Windows.Forms.Application]::AddMessageFilter((New-Object RustSuite.WheelRouter))
@@ -5678,8 +6229,19 @@ $body.Controls.Add($contentWrap, 1, 0)
 $body.Controls.Add($rightCol, 2, 0)
 
 foreach ($c in @($form, $body, $footer, $nav, $navTop, $navBottom, $rightCol, $statsPanel,
-                 $contentWrap, $logPanel, $logHost, $script:RowHost)) {
+                 $contentWrap, $logPanel, $logHost, $script:RowHost, $navScrollWrap)) {
     Enable-DoubleBuffer $c
+}
+
+# Ширина контента с запасом под вертикальную полосу прокрутки:
+# иначе фиксированные панели вылезают вправо и появляется горизонтальный скролл.
+function Get-RowWidth {
+    param([int]$Pad = 22)
+    $sb = 0
+    try { $sb = [int][System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth } catch {}
+    $w = $script:RowHost.ClientSize.Width - (S $Pad) - $sb
+    if ($w -lt (S 280)) { $w = (S 280) }
+    return [int]$w
 }
 
 # ============================================================
@@ -5695,7 +6257,7 @@ function Update-RowWidths {
 }
 
 function Show-BindsPanel {
-    $w = $script:RowHost.ClientSize.Width - (S 18)
+    $w = Get-RowWidth 18
     if ($w -lt (S 340)) { $w = (S 340) }
     $recs = @(Get-BindRecords)
 
@@ -5934,7 +6496,7 @@ function Show-Group {
         if ($gid -eq 'settings') { Show-SettingsPanel; return }
 
     $items = @($script:Tweaks | Where-Object { $_.Group -eq $gid })
-    $w = $script:RowHost.ClientSize.Width - (S 18)
+    $w = Get-RowWidth 18
     if ($w -lt (S 300)) { $w = (S 300) }
 
     $y = S 2
@@ -6325,7 +6887,7 @@ function Invoke-RepairToolFromUi {
 
 function Show-RepairPanel {
     try { if ($script:RepairTip) { $script:RepairTip.Dispose(); $script:RepairTip = $null } } catch {}
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     $accentBar = New-Object System.Windows.Forms.Panel
@@ -6707,7 +7269,7 @@ function New-LookPreview {
 function Show-PicturePanel {
     $script:PreviewPaintWarned = $false
     $script:PreviewPaints = 0
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     # ---------- Заголовок ----------
@@ -7539,24 +8101,81 @@ $btnScan.Add_Click({
     Start-HealthScan
 })
 
+# ---------- Горячие клавиши ----------
+$form.Add_KeyDown({
+    param($s, $e)
+    try {
+        if (-not $e.Control) { return }
+        $key = [int]$e.KeyCode
+        $first = [int][System.Windows.Forms.Keys]::D1
+        $last  = [int][System.Windows.Forms.Keys]::D8
+        if ($key -ge $first -and $key -le $last) {
+            $idx = $key - $first
+            if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
+                Show-Group $script:Groups[$idx].Id
+                $e.Handled = $true
+                $e.SuppressKeyPress = $true
+                return
+            }
+        }
+        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::R) {
+            Update-Stats
+            Set-Status 'Статистика обновлена' '#8B949E'
+            $e.Handled = $true
+            $e.SuppressKeyPress = $true
+        }
+    } catch {}
+})
+
 # ---------- Жизненный цикл ----------
 $form.Add_FormClosing({
     param($s, $e)
+    if ($script:Closing) { return }
     if ($script:Busy -and -not $script:TestUi) {
         $a = [System.Windows.Forms.MessageBox]::Show(
             'Оптимизация ещё выполняется. Прервать?', 'PURPLE RUSH', 'YesNo', 'Warning')
         if ($a -ne 'Yes') { $e.Cancel = $true; return }
     }
+    $script:Closing = $true
     try { $script:StatsTimer.Stop() } catch {}
     try { $script:LaunchTimer.Stop() } catch {}
+    try { $script:ProbeTimer.Stop() } catch {}
+    try { $script:CloseTimer.Stop() } catch {}
+    try { if ($script:TempTimer) { $script:TempTimer.Stop(); $script:TempTimer.Dispose() } } catch {}
+    try { if ($script:ThemeTimer) { $script:ThemeTimer.Stop(); $script:ThemeTimer.Dispose() } } catch {}
     try { if ($script:RepairScanTimer) { $script:RepairScanTimer.Stop(); $script:RepairScanTimer.Dispose() } } catch {}
     if ($script:State['TimerOn']) { try { [RustSuite.Native]::TimerStop() } catch {} }
+
+    # Запоминаем размер и позицию окна для следующего запуска.
+    if (-not $script:TestUi -and -not $script:SelfTest) {
+        try {
+            $script:State['WinW']   = [int]$form.Width
+            $script:State['WinH']   = [int]$form.Height
+            $script:State['WinX']   = [int]$form.Left
+            $script:State['WinY']   = [int]$form.Top
+            $script:State['WinPos'] = $true
+            Save-State
+        } catch {}
+    }
 })
 
 $form.Add_Shown({
     [void][RustSuite.Native]::DarkTitle($form)
     [void][RustSuite.Native]::DarkScroll($script:RowHost)
     [void][RustSuite.Native]::DarkScroll($script:LogBox)
+
+    # Ярлык с фирменной иконкой создаётся один раз при запуске .bat.
+    if (-not $script:TestUi) {
+        try {
+            $hadShortcut = $false
+            $desktop = [Environment]::GetFolderPath('Desktop')
+            if ($desktop) { $hadShortcut = Test-Path -LiteralPath (Join-Path $desktop 'PURPLE RUSH.lnk') }
+            $script:ShortcutPath = Install-AppShortcut
+            if ($script:ShortcutPath -and -not $hadShortcut) {
+                Write-Log ('Ярлык создан на рабочем столе: ' + $script:ShortcutPath) 'ok'
+            }
+        } catch {}
+    }
 
     Show-Group 'sys'
     Update-Stats
@@ -7636,6 +8255,45 @@ $form.Add_Shown({
                         if ($script:PictureStatusLabel -and $script:PictureStatusLabel.Text.Length -lt 3) {
                             throw 'PICTURE STATUS MISSING'
                         }
+                        try { $script:RowHost.PerformLayout() } catch {}
+                        try { $script:ContentScrollStrip.Sync() } catch {}
+                        Write-Host ('SCROLL content strip=' + $script:ContentScrollStrip.Visible +
+                                    ' height=' + $script:RowHost.ClientSize.Height +
+                                    ' hscroll=' + $script:RowHost.HorizontalScroll.Visible)
+                        if (-not $script:ContentScrollStrip.Visible) { throw 'CONTENT SCROLL STRIP MISSING' }
+                        if ($script:RowHost.HorizontalScroll.Visible) { throw 'CONTENT HORIZONTAL SCROLL PRESENT' }
+
+                        # Стрелка «вниз» на нашей полосе действительно листает страницу.
+                        $before = [int]$script:RowHost.VerticalScroll.Value
+                        $mi = [System.Windows.Forms.Control].GetMethod('OnMouseDown',
+                            [System.Reflection.BindingFlags]'Instance,NonPublic')
+                        $me = New-Object System.Windows.Forms.MouseEventArgs(
+                            [System.Windows.Forms.MouseButtons]::Left, 1,
+                            [int]($script:ContentScrollStrip.Width / 2),
+                            [int]($script:ContentScrollStrip.Height - 5), 0)
+                        $mi.Invoke($script:ContentScrollStrip, @($me.PSObject.BaseObject)) | Out-Null
+                        $after = [int]$script:RowHost.VerticalScroll.Value
+                        $script:RowHost.ScrollToTop()
+                        if ($after -le $before) { throw 'CONTENT SCROLL STRIP NOT WORKING' }
+
+                        $origSize = $form.Size
+                        try {
+                            $form.Size = $form.MinimumSize
+                            $form.PerformLayout()
+                            try { $script:NavTopPanel.PerformLayout() } catch {}
+                            try { $script:NavScrollStrip.Sync() } catch {}
+                            Write-Host ('SCROLL nav strip=' + $script:NavScrollStrip.Visible +
+                                        ' height=' + $script:NavTopPanel.ClientSize.Height +
+                                        ' max=' + $script:NavTopPanel.VerticalScroll.Maximum)
+                            if (-not $script:NavScrollStrip.Visible) { throw 'NAV SCROLL STRIP MISSING' }
+                            try { $script:NavTopPanel.AutoScrollPosition = New-Object System.Drawing.Point 0, 60 } catch {}
+                            if ([int]$script:NavTopPanel.VerticalScroll.Value -le 0) { throw 'NAV SCROLL NOT WORKING' }
+                        } finally {
+                            $form.Size = $origSize
+                            $form.PerformLayout()
+                            try { $script:NavTopPanel.AutoScrollPosition = New-Object System.Drawing.Point 0, 0 } catch {}
+                        }
+                        $form.Refresh()
                         Write-Host 'PICTURE OK'
                     }
                     11 {
@@ -7666,5 +8324,23 @@ $form.Add_Shown({
     Write-Log ('Ошибка интерфейса: ' + $msg) 'err'
 })
 
+# Ошибка вне UI-потока не должна приводить к молчаливому падению:
+# пишем её в журнал, чтобы причина осталась видимой.
+try {
+    [AppDomain]::CurrentDomain.add_UnhandledException({
+        param($s, $e)
+        $msg = ''
+        if ($e -and $e.ExceptionObject) { $msg = [string]$e.ExceptionObject.Message }
+        Write-Log ('Критическая ошибка: ' + $msg) 'err'
+    })
+} catch {}
+
 [System.Windows.Forms.Application]::Run($form)
+
+try {
+    if ($script:SingleInstance) {
+        $script:SingleInstance.ReleaseMutex()
+        $script:SingleInstance.Dispose()
+    }
+} catch {}
 

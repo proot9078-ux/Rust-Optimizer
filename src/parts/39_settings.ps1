@@ -95,6 +95,7 @@ function Update-ThemeSurfaces {
     $pairs = @(
         @{ N='FooterPanel';  C='Panel' }, @{ N='NavPanel';      C='Bg' },
         @{ N='NavTopPanel';  C='Bg' },    @{ N='NavBottomPanel'; C='Bg' },
+        @{ N='NavScrollWrap'; C='Bg' },
         @{ N='BodyPanel';    C='Bg' },    @{ N='ContentWrap';   C='Bg' },
         @{ N='RightCol';     C='Panel' }, @{ N='StatsPanel';    C='Panel' },
         @{ N='LogPanel';     C='Panel' }, @{ N='LogHost';       C='Panel' }
@@ -319,7 +320,7 @@ function Read-SettingsTemps {
 
 # ---------- Панель настроек ----------
 function Show-SettingsPanel {
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     # Заголовок
@@ -499,6 +500,25 @@ function Show-SettingsPanel {
     $lblBehHint.AutoSize  = $false
     $lblBehHint.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 30)
     $script:RowHost.Controls.Add($lblBehHint)
+    $y += S 42
+
+    $btnShortcut = New-Object RustSuite.FlatButton
+    $btnShortcut.Style  = 'Ghost'
+    $btnShortcut.Text   = 'СОЗДАТЬ ЯРЛЫК НА РАБОЧЕМ СТОЛЕ'
+    $btnShortcut.Font   = [RustSuite.Theme]::FSmall
+    $btnShortcut.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 30)
+    $btnShortcut.Add_Click({
+        $lnk = Install-AppShortcut -Force
+        if ($lnk) {
+            $script:ShortcutPath = $lnk
+            Set-Status 'Ярлык обновлён на рабочем столе' '#4ECB71'
+            Write-Log ('Ярлык создан: ' + $lnk) 'ok'
+        } else {
+            Set-Status 'Не удалось создать ярлык' '#FF6B62'
+            Write-Log 'Не удалось создать ярлык (нет лаунчера или иконки)' 'warn'
+        }
+    })
+    $script:RowHost.Controls.Add($btnShortcut)
     $y += S 42
 
     # --- Мониторинг ---

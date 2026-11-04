@@ -27,17 +27,46 @@ if ($script:SC -gt 2.5) { $script:SC = 2.5 }
 function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$winW = [Math]::Min((S 1240), [Math]::Max((S 1020), $area.Width - (S 60)))
-$winH = [Math]::Min((S 820),  [Math]::Max((S 660), $area.Height - (S 70)))
-$form.Size        = New-Object System.Drawing.Size $winW, $winH
-$form.MinimumSize = New-Object System.Drawing.Size (S 1000), (S 640)
-$form.Font        = [RustSuite.Theme]::FSub
+$minW = S 1000
+$minH = S 640
+$winW = [Math]::Min((S 1240), [Math]::Max($minW, $area.Width - (S 60)))
+$winH = [Math]::Min((S 820),  [Math]::Max($minH, $area.Height - (S 70)))
 
-# Handle создаётся выше для чтения DPI, поэтому CenterScreen успевает
+# Восстанавливаем размер прошлой сессии, если он помещается на текущий экран.
+try {
+    $savedW = [int]$script:State['WinW']
+    $savedH = [int]$script:State['WinH']
+    if ($savedW -ge $minW -and $savedH -ge $minH) {
+        $winW = [Math]::Min($savedW, [Math]::Max($minW, $area.Width - (S 20)))
+        $winH = [Math]::Min($savedH, [Math]::Max($minH, $area.Height - (S 20)))
+    }
+} catch {}
+
+$form.Size        = New-Object System.Drawing.Size $winW, $winH
+$form.MinimumSize = New-Object System.Drawing.Size $minW, $minH
+$form.Font        = [RustSuite.Theme]::FSub
+$form.KeyPreview  = $true
+Set-AppWindowIcon $form
+
+# Handle создаётся выше для чтения DPI, поэтому CenterScreen не успевает
 # примениться к размеру по умолчанию. Позиционируем окно вручную уже
 # после установки финального размера — иначе часть окна уходит за экран.
 $px = $area.Left + [int][Math]::Max(0, (($area.Width - $winW) / 2))
 $py = $area.Top  + [int][Math]::Max(0, (($area.Height - $winH) / 2))
+
+# Позицию прошлой сессии используем только если окно остаётся видимым
+# хотя бы на одном мониторе (например, после отключения второго экрана).
+try {
+    if ($script:State['WinPos']) {
+        $sx = [int]$script:State['WinX']
+        $sy = [int]$script:State['WinY']
+        $r  = New-Object System.Drawing.Rectangle $sx, $sy, $winW, $winH
+        foreach ($scr in [System.Windows.Forms.Screen]::AllScreens) {
+            if ($scr.WorkingArea.IntersectsWith($r)) { $px = $sx; $py = $sy; break }
+        }
+    }
+} catch {}
+
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point $px, $py
 
@@ -67,10 +96,33 @@ $header.Add_Paint({
         $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST', $f,
             [System.Drawing.Point]::new((S 26), (S 15)), [RustSuite.Theme]::Accent, $tf)
+        $w2 = [System.Windows.Forms.TextRenderer]::MeasureText('PERFORMANCE SUITE', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'PERFORMANCE SUITE', $f,
             [System.Drawing.Point]::new(((S 26) + $w1 + (S 14)), (S 15)), [RustSuite.Theme]::TextC, $tf)
 
-        $sub = 'оптимизация Windows под RUST   ·   v' + $script:AppVersion + '   ·   журнал: ProgramData\RustOptimizer'
+        # Небольшой бейдж версии рядом с заголовком.
+        $vtext = 'v' + $script:AppVersion
+        $vfont = [RustSuite.Theme]::FSmall
+        $vsz   = [System.Windows.Forms.TextRenderer]::MeasureText($vtext, $vfont)
+        $vw    = $vsz.Width + (S 18)
+        $vh    = S 21
+        $vx    = (S 26) + $w1 + (S 14) + $w2 + (S 14)
+        if (($vx + $vw) -lt ($s.Width - (S 230))) {
+            $vrect = [System.Drawing.Rectangle]::new($vx, (S 16), $vw, $vh)
+            $vp    = [RustSuite.Theme]::Round([System.Drawing.RectangleF]$vrect, (S 10))
+            $vbr   = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(45, [RustSuite.Theme]::Accent))
+            $g.FillPath($vbr, $vp)
+            $vbr.Dispose()
+            $vpen  = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(120, [RustSuite.Theme]::AccentLt), 1)
+            $g.DrawPath($vpen, $vp)
+            $vpen.Dispose(); $vp.Dispose()
+            $vcf = [System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor `
+                   [System.Windows.Forms.TextFormatFlags]::VerticalCenter
+            [System.Windows.Forms.TextRenderer]::DrawText($g, $vtext, $vfont, $vrect,
+                [RustSuite.Theme]::AccentLt, $vcf)
+        }
+
+        $sub = 'оптимизация Windows под RUST   ·   журнал: ProgramData\RustOptimizer'
         [System.Windows.Forms.TextRenderer]::DrawText($g, $sub, [RustSuite.Theme]::FSub,
             [System.Drawing.Point]::new((S 28), (S 70)), [RustSuite.Theme]::Muted, $tf)
 
@@ -101,6 +153,9 @@ $header.Add_Paint({
         $rrect = [System.Drawing.Rectangle]::new(($s.Width - $cw - (S 26)), (S 50), $cw, (S 20))
         $rf = [System.Windows.Forms.TextFormatFlags]::Right -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $rst, [RustSuite.Theme]::FSmall, $rrect, $rc, $rf)
+        $line = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, [RustSuite.Theme]::Accent)), 1
+        $g.DrawLine($line, 0, ($s.Height - 1), $s.Width, ($s.Height - 1))
+        $line.Dispose()
     } catch {}
 })
 
@@ -115,6 +170,14 @@ $footer.Add_Paint({
     $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(34, 40, 52)), 1
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
+    try {
+        $hint = 'Ctrl+1…8 — разделы    ·    Ctrl+R — обновить статистику'
+        $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
+        [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
+            [RustSuite.Theme]::FSmall, $hr,
+            [System.Drawing.Color]::FromArgb(120, [RustSuite.Theme]::Muted),
+            [System.Windows.Forms.TextFormatFlags]::Right)
+    } catch {}
 })
 
 $btnRun = New-Object RustSuite.FlatButton
@@ -196,6 +259,11 @@ $nav.RowCount    = 2
 [void]$nav.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Absolute, (S 108))))
 
+$navScrollWrap = New-Object System.Windows.Forms.Panel
+$script:NavScrollWrap = $navScrollWrap
+$navScrollWrap.Dock      = 'Fill'
+$navScrollWrap.BackColor = [RustSuite.Theme]::Bg
+
 $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock       = 'Fill'
@@ -203,6 +271,7 @@ $navTop.BackColor  = [RustSuite.Theme]::Bg
 # При минимальной высоте окна восемь пунктов не помещаются —
 # включаем прокрутку вместо наложения на блок «ПРОФИЛИ».
 $navTop.AutoScroll = $true
+$navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
     @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
@@ -216,6 +285,10 @@ $script:Groups = @(
 )
 
 $i = 0
+$script:NavTip = New-Object System.Windows.Forms.ToolTip
+$script:NavTip.InitialDelay  = 450
+$script:NavTip.ReshowDelay   = 120
+$script:NavTip.AutoPopDelay  = 6000
 foreach ($grp in $script:Groups) {
     $b = New-Object RustSuite.NavButton
     $b.Text   = $grp.Glyph + '  ' + $grp.Title
@@ -223,6 +296,7 @@ foreach ($grp in $script:Groups) {
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
     $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
+    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
     $i = $i + 1
@@ -254,7 +328,10 @@ $btnMax.Font   = [RustSuite.Theme]::FSmall
 $btnMax.Bounds = New-Object System.Drawing.Rectangle 0, (S 56), (S 186), (S 30)
 
 $navBottom.Controls.AddRange(@($lblProfiles, $btnSafe, $btnMax))
-$nav.Controls.Add($navTop, 0, 0)
+$script:NavScrollStrip = New-Object RustSuite.ScrollStrip
+$script:NavScrollStrip.Target = $navTop
+$navScrollWrap.Controls.Add($script:NavScrollStrip)
+$nav.Controls.Add($navScrollWrap, 0, 0)
 $nav.Controls.Add($navBottom, 0, 1)
 
 # ---------- Правая колонка: статистика + журнал ----------
@@ -394,7 +471,10 @@ $script:RowHost = New-Object RustSuite.SmoothScrollPanel
 $script:RowHost.Dock       = 'Fill'
 $script:RowHost.BackColor  = [RustSuite.Theme]::Bg
 $script:RowHost.AutoScroll = $true
+$script:ContentScrollStrip = New-Object RustSuite.ScrollStrip
+$script:ContentScrollStrip.Target = $script:RowHost
 $contentWrap.Controls.Add($script:RowHost)
+$contentWrap.Controls.Add($script:ContentScrollStrip)
 try {
     [RustSuite.WheelHub]::Target = $script:RowHost
     [void][System.Windows.Forms.Application]::AddMessageFilter((New-Object RustSuite.WheelRouter))
@@ -405,8 +485,19 @@ $body.Controls.Add($contentWrap, 1, 0)
 $body.Controls.Add($rightCol, 2, 0)
 
 foreach ($c in @($form, $body, $footer, $nav, $navTop, $navBottom, $rightCol, $statsPanel,
-                 $contentWrap, $logPanel, $logHost, $script:RowHost)) {
+                 $contentWrap, $logPanel, $logHost, $script:RowHost, $navScrollWrap)) {
     Enable-DoubleBuffer $c
+}
+
+# Ширина контента с запасом под вертикальную полосу прокрутки:
+# иначе фиксированные панели вылезают вправо и появляется горизонтальный скролл.
+function Get-RowWidth {
+    param([int]$Pad = 22)
+    $sb = 0
+    try { $sb = [int][System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth } catch {}
+    $w = $script:RowHost.ClientSize.Width - (S $Pad) - $sb
+    if ($w -lt (S 280)) { $w = (S 280) }
+    return [int]$w
 }
 
 # ============================================================
@@ -422,7 +513,7 @@ function Update-RowWidths {
 }
 
 function Show-BindsPanel {
-    $w = $script:RowHost.ClientSize.Width - (S 18)
+    $w = Get-RowWidth 18
     if ($w -lt (S 340)) { $w = (S 340) }
     $recs = @(Get-BindRecords)
 
@@ -661,7 +752,7 @@ function Show-Group {
         if ($gid -eq 'settings') { Show-SettingsPanel; return }
 
     $items = @($script:Tweaks | Where-Object { $_.Group -eq $gid })
-    $w = $script:RowHost.ClientSize.Width - (S 18)
+    $w = Get-RowWidth 18
     if ($w -lt (S 300)) { $w = (S 300) }
 
     $y = S 2

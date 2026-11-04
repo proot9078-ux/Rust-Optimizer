@@ -147,7 +147,7 @@ function New-LookPreview {
 function Show-PicturePanel {
     $script:PreviewPaintWarned = $false
     $script:PreviewPaints = 0
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     # ---------- Заголовок ----------

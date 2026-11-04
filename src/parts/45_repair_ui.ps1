@@ -266,7 +266,7 @@ function Invoke-RepairToolFromUi {
 
 function Show-RepairPanel {
     try { if ($script:RepairTip) { $script:RepairTip.Dispose(); $script:RepairTip = $null } } catch {}
-    $w = $script:RowHost.ClientSize.Width - (S 22)
+    $w = Get-RowWidth 22
     if ($w -lt (S 340)) { $w = (S 340) }
 
     $accentBar = New-Object System.Windows.Forms.Panel

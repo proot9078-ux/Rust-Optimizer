@@ -201,6 +201,278 @@ namespace RustSuite
             _t.Stop();
             try { AutoScrollPosition = new Point(0, 0); } catch { }
         }
+
+        public void ScrollToValue(int v)
+        {
+            _target = Math.Max(0, v);
+            _t.Stop();
+            try { AutoScrollPosition = new Point(0, _target); } catch { }
+        }
+    }
+
+    // Заметная вертикальная полоса прокрутки со стрелками вверх/вниз.
+    // Накладывается поверх штатной полосы целевой панели и работает
+    // с её AutoScrollPosition, поэтому не ломает колесо и клавиатуру.
+    public class ScrollStrip : Control
+    {
+        private readonly Timer _t;
+        private Control _target;
+        private bool _hoverUp, _hoverDown, _hoverThumb;
+        private bool _dragging;
+        private int _dragOffset;
+        private int _arrowH;
+        private bool _syncing;
+
+        public Control Target
+        {
+            get { return _target; }
+            set
+            {
+                _target = value;
+                ScrollableControl sc = _target as ScrollableControl;
+                if (sc != null) { sc.Scroll += delegate { Invalidate(); }; }
+                Visible = false;
+                Sync();
+            }
+        }
+
+        public ScrollStrip()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+            _arrowH = 16;
+            try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
+            _t = new Timer();
+            _t.Interval = 40;
+            _t.Tick += delegate { Sync(); };
+            _t.Start();
+        }
+
+        private ScrollableControl Sc { get { return _target as ScrollableControl; } }
+
+        private int MaxValue
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(0, Sc.VerticalScroll.Maximum - Sc.VerticalScroll.LargeChange + 1); }
+                catch { return 0; }
+            }
+        }
+
+        private int Value
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(0, -Sc.AutoScrollPosition.Y); } catch { return 0; }
+            }
+        }
+
+        private int ContentHeight
+        {
+            get
+            {
+                if (Sc == null) return 0;
+                try { return Math.Max(1, Sc.VerticalScroll.Maximum); } catch { return 1; }
+            }
+        }
+
+        private int ViewHeight
+        {
+            get
+            {
+                if (Sc == null) return 1;
+                try { return Math.Max(1, Sc.ClientSize.Height); } catch { return 1; }
+            }
+        }
+
+        public void Sync()
+        {
+            if (_syncing || Sc == null || Sc.IsDisposed || IsDisposed) return;
+            _syncing = true;
+            try
+            {
+                bool need = false;
+                try { need = Sc.VerticalScroll.Visible && MaxValue > 0; } catch { }
+                if (!need)
+                {
+                    if (Visible) Visible = false;
+                    return;
+                }
+
+                int x, y, h;
+                if (Parent == _target)
+                {
+                    x = Math.Max(0, Sc.ClientSize.Width - Width);
+                    y = -Sc.AutoScrollPosition.Y;
+                    h = Sc.ClientSize.Height;
+                }
+                else
+                {
+                    x = _target.Right - Width;
+                    y = _target.Top;
+                    h = _target.Height;
+                }
+                if (Bounds.X != x || Bounds.Y != y || Bounds.Height != h || Bounds.Width != Width)
+                {
+                    Bounds = new Rectangle(x, y, Width, h);
+                }
+                if (!Visible)
+                {
+                    Visible = true;
+                    BringToFront();
+                }
+                Invalidate();
+            }
+            catch { }
+            finally { _syncing = false; }
+        }
+
+        private int TrackTop { get { return _arrowH + 2; } }
+        private int TrackBottom { get { return Height - _arrowH - 2; } }
+        private int TrackHeight { get { return Math.Max(1, TrackBottom - TrackTop); } }
+
+        private int ThumbHeight()
+        {
+            int h = (int)Math.Round((double)TrackHeight * Math.Min(1.0, (double)ViewHeight / ContentHeight));
+            return Math.Max(24, Math.Min(TrackHeight, h));
+        }
+
+        private Rectangle ThumbRect()
+        {
+            int th = ThumbHeight();
+            int room = TrackHeight - th;
+            int max = MaxValue;
+            int y = TrackTop;
+            if (max > 0 && room > 0)
+            {
+                y += (int)Math.Round((double)room * Math.Min(1.0, (double)Value / max));
+            }
+            return new Rectangle(3, y, Math.Max(4, Width - 6), th);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int w = Width, h = Height;
+            using (SolidBrush b = new SolidBrush(Theme.Field)) g.FillRectangle(b, 0, 0, w, h);
+            DrawArrow(g, _hoverUp ? Theme.AccentLt : Theme.Muted, 0, true);
+            DrawArrow(g, _hoverDown ? Theme.AccentLt : Theme.Muted, h - _arrowH, false);
+
+            Color track = Theme.Lerp(Theme.Field, Theme.Bg, 0.55f);
+            using (SolidBrush tb = new SolidBrush(track)) g.FillRectangle(tb, 3, TrackTop, Math.Max(1, w - 6), TrackHeight);
+
+            Rectangle tr = ThumbRect();
+            Color thumb = (_dragging || _hoverThumb) ? Theme.AccentLt : Theme.Accent;
+            using (GraphicsPath p = RoundRect(tr, 5))
+            using (SolidBrush sb = new SolidBrush(thumb)) g.FillPath(sb, p);
+            using (Pen pen = new Pen(Theme.Lerp(Theme.Accent, Color.White, 0.3f), 1f))
+            {
+                if (tr.Width > 6) g.DrawLine(pen, tr.X + 3, tr.Y + 3, tr.Right - 4, tr.Y + 3);
+            }
+            using (Pen bp = new Pen(Theme.Lerp(Theme.BorderC, Theme.Bg, 0.35f), 1f))
+            {
+                g.DrawRectangle(bp, 0, 0, w - 1, h - 1);
+            }
+        }
+
+        private void DrawArrow(Graphics g, Color c, int top, bool up)
+        {
+            int cx = Width / 2;
+            int cy = top + _arrowH / 2;
+            Point[] p = up
+                ? new Point[] { new Point(cx, cy - 4), new Point(cx - 5, cy + 2), new Point(cx + 5, cy + 2) }
+                : new Point[] { new Point(cx, cy + 4), new Point(cx - 5, cy - 2), new Point(cx + 5, cy - 2) };
+            using (SolidBrush b = new SolidBrush(c)) g.FillPolygon(b, p);
+        }
+
+        private GraphicsPath RoundRect(Rectangle r, int rad)
+        {
+            GraphicsPath p = new GraphicsPath();
+            int d = Math.Max(2, rad * 2);
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        private void ScrollTo(int v)
+        {
+            if (Sc == null) return;
+            int max = MaxValue;
+            if (v < 0) v = 0;
+            if (v > max) v = max;
+            SmoothScrollPanel smooth = Sc as SmoothScrollPanel;
+            if (smooth != null) smooth.ScrollToValue(v);
+            else { try { Sc.AutoScrollPosition = new Point(0, v); } catch { } }
+            Invalidate();
+        }
+
+        private void PageTo(int dir)
+        {
+            int page = Math.Max(40, ViewHeight - 40);
+            ScrollTo(Value + dir * page);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            if (e.Y < _arrowH) { PageTo(-1); return; }
+            if (e.Y >= Height - _arrowH) { PageTo(1); return; }
+            Rectangle tr = ThumbRect();
+            if (tr.Contains(e.Location))
+            {
+                _dragging = true;
+                _dragOffset = e.Y - tr.Y;
+            }
+            else
+            {
+                ScrollTo(Value + (e.Y < tr.Y ? -1 : 1) * Math.Max(40, ViewHeight - 40));
+            }
+            Invalidate();
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            _hoverUp = e.Y < _arrowH;
+            _hoverDown = e.Y >= Height - _arrowH;
+            _hoverThumb = ThumbRect().Contains(e.Location);
+            if (_dragging)
+            {
+                int room = TrackHeight - ThumbHeight();
+                int rel = e.Y - TrackTop - _dragOffset;
+                if (rel < 0) rel = 0;
+                if (rel > room) rel = room;
+                int max = MaxValue;
+                int v = (room <= 0 || max <= 0) ? 0 : (int)Math.Round((double)max * rel / room);
+                ScrollTo(v);
+            }
+            Invalidate();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            _dragging = false;
+            Invalidate();
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _hoverUp = _hoverDown = _hoverThumb = false;
+            _dragging = false;
+            Invalidate();
+        }
     }
 
     // Колесо мыши над навигацией/панелями тоже прокручивает контент.
@@ -227,10 +499,33 @@ namespace RustSuite
             POINT p;
             if (!GetCursorPos(out p)) return false;
             Control c = Control.FromHandle(WindowFromPoint(p));
+
+            // Курсор над нашей полосой — крутим её панель, а не контент.
+            ScrollStrip strip = c as ScrollStrip;
+            if (strip != null && strip.Target != null && strip.Target.IsHandleCreated)
+            {
+                SendMessage(strip.Target.Handle, m.Msg, m.WParam, m.LParam);
+                return true;
+            }
+
             for (Control x = c; x != null; x = x.Parent)
             {
-                if (x is SmoothScrollPanel) return false;
                 if (x is TextBoxBase || x is ListBox || x is ComboBox) return false;
+
+                // Меню разделов и другие AutoScroll-панели листаются своим колесом.
+                ScrollableControl sc = x as ScrollableControl;
+                if (sc != null && sc.AutoScroll && sc != Target)
+                {
+                    bool canScroll = false;
+                    try { canScroll = sc.VerticalScroll.Visible && sc.VerticalScroll.Maximum > sc.VerticalScroll.LargeChange; }
+                    catch { }
+                    if (canScroll)
+                    {
+                        SendMessage(sc.Handle, m.Msg, m.WParam, m.LParam);
+                        return true;
+                    }
+                }
+                if (x is SmoothScrollPanel) return false;
             }
             SendMessage(Target.Handle, m.Msg, m.WParam, m.LParam);
             return true;
@@ -939,7 +1234,16 @@ namespace RustSuite
 
         public static void DarkTitle(Form f)
         {
-            try { int v = 1; DwmSetWindowAttribute(f.Handle, 20, ref v, 4); DwmSetWindowAttribute(f.Handle, 19, ref v, 4); } catch { }
+            try
+            {
+                int v = 1;
+                DwmSetWindowAttribute(f.Handle, 20, ref v, 4);
+                DwmSetWindowAttribute(f.Handle, 19, ref v, 4);
+                // Windows 11: скруглённые углы окна (на Windows 10 вызов игнорируется).
+                int corner = 2;
+                DwmSetWindowAttribute(f.Handle, 33, ref corner, 4);
+            }
+            catch { }
         }
         public static void DarkScroll(Control c)
         {

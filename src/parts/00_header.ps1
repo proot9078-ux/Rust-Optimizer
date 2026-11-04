@@ -1,15 +1,15 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.1
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v4.2
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
-param([switch]$SelfTest, [switch]$TestUi)
+param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '4.1'
+$script:AppVersion   = '4.2'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -43,6 +43,8 @@ $script:RustState    = $null
 $script:Header       = $null
 $script:AutoClose    = $true
 $script:CloseTimer   = $null
+$script:Closing      = $false
+$script:ShortcutPath = $null
 
 New-Item -ItemType Directory -Force -Path $script:Root, $script:RegBackup, $script:RustBackup | Out-Null
 
