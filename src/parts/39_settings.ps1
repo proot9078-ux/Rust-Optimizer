@@ -523,6 +523,76 @@ function Show-SettingsPanel {
     $script:RowHost.Controls.Add($btnShortcut)
     $y += S 42
 
+    # --- Профили и отчёт о надёжности (v5.1) ---
+    $lblProf = New-Object System.Windows.Forms.Label
+    $lblProf.Text      = 'ПРОФИЛИ И ПРОВЕРКА НАДЁЖНОСТИ'
+    $lblProf.Font      = [RustSuite.Theme]::FHead
+    $lblProf.ForeColor = [RustSuite.Theme]::Muted
+    $lblProf.BackColor = [System.Drawing.Color]::Transparent
+    $lblProf.AutoSize  = $false
+    $lblProf.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblProf)
+    $y += S 24
+
+    $halfW = [int](($w - (S 8)) / 2)
+    $btnExport = New-Object RustSuite.FlatButton
+    $btnExport.Style  = 'Ghost'
+    $btnExport.Text   = 'ЭКСПОРТ ПРОФИЛЯ'
+    $btnExport.Font   = [RustSuite.Theme]::FSmall
+    $btnExport.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 34)
+    $btnExport.Add_Click({
+        $dlg = New-Object System.Windows.Forms.SaveFileDialog
+        try {
+            $dlg.Title      = 'Экспорт профиля PURPLE RUSH'
+            $dlg.Filter     = 'Профиль PURPLE RUSH (*.json)|*.json|Все файлы (*.*)|*.*'
+            $dlg.FileName   = 'purple-rush-profile.json'
+            $dlg.DefaultExt = 'json'
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                try {
+                    $null = Export-OptimizerProfile -Path $dlg.FileName
+                    Set-Status 'Профиль сохранён в JSON' '#4ECB71'
+                } catch {
+                    Set-Status ('Ошибка экспорта: ' + $_.Exception.Message) '#FF6B62'
+                }
+            }
+        } finally { $dlg.Dispose() }
+    })
+    $script:RowHost.Controls.Add($btnExport)
+
+    $btnImport = New-Object RustSuite.FlatButton
+    $btnImport.Style  = 'Ghost'
+    $btnImport.Text   = 'ИМПОРТ ПРОФИЛЯ'
+    $btnImport.Font   = [RustSuite.Theme]::FSmall
+    $btnImport.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, $halfW, (S 34)
+    $btnImport.Add_Click({
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        try {
+            $dlg.Title       = 'Импорт профиля PURPLE RUSH'
+            $dlg.Filter      = 'Профиль PURPLE RUSH (*.json)|*.json|Все файлы (*.*)|*.*'
+            $dlg.CheckFileExists = $true
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                try {
+                    $res = Import-OptimizerProfile -Path $dlg.FileName
+                    Set-Status ('Профиль применён: ' + $res.Applied + ' модулей') '#4ECB71'
+                    Show-Group 'settings'
+                } catch {
+                    Set-Status ('Ошибка импорта: ' + $_.Exception.Message) '#FF6B62'
+                }
+            }
+        } finally { $dlg.Dispose() }
+    })
+    $script:RowHost.Controls.Add($btnImport)
+    $y += S 44
+
+    $btnTrust = New-Object RustSuite.FlatButton
+    $btnTrust.Style  = 'Ghost'
+    $btnTrust.Text   = 'ОТЧЁТ О НАДЁЖНОСТИ · ЧТО ИМЕННО МЕНЯЕТСЯ'
+    $btnTrust.Font   = [RustSuite.Theme]::FSmall
+    $btnTrust.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 34)
+    $btnTrust.Add_Click({ Show-TrustReport })
+    $script:RowHost.Controls.Add($btnTrust)
+    $y += S 46
+
     # --- Мониторинг ---
     $lblMon = New-Object System.Windows.Forms.Label
     $lblMon.Text      = 'МОНИТОРИНГ · обновляется автоматически'

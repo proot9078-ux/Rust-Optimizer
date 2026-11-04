@@ -1,15 +1,15 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.0
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.1
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
-param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
+param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Verify)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.0'
+$script:AppVersion   = '5.1'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -61,6 +61,13 @@ try {
 if (Test-Path -LiteralPath $script:StateFile) {
     try { $script:State = Import-Clixml -LiteralPath $script:StateFile } catch { $script:State = @{} }
 }
+# Если основной state.xml повреждён (обрыв записи, сбой питания), пробуем .bak.
+if (-not ($script:State -is [hashtable]) -or $script:State.Count -eq 0) {
+    $bak = $script:StateFile + '.bak'
+    if (Test-Path -LiteralPath $bak) {
+        try { $script:State = Import-Clixml -LiteralPath $bak } catch { $script:State = @{} }
+    }
+}
 if (-not ($script:State -is [hashtable])) { $script:State = @{} }
 
 # Закрывать ли оптимизатор автоматически после успешного запуска RUST.
@@ -68,9 +75,20 @@ if ($null -ne $script:State['AutoClose']) {
     $script:AutoClose = [bool]$script:State['AutoClose']
 }
 
+# Атомарная запись состояния: сначала во временный файл, затем подмена.
+# Так сбой или закрытие окна не оставит полупустой state.xml.
 function Save-State {
     if ($script:SuppressSave) { return }
-    try { $script:State | Export-Clixml -LiteralPath $script:StateFile -Depth 6 -Force } catch {}
+    $tmp = $script:StateFile + '.new'
+    try {
+        $script:State | Export-Clixml -LiteralPath $tmp -Depth 6 -Force
+        if (Test-Path -LiteralPath $script:StateFile) {
+            try { Copy-Item -LiteralPath $script:StateFile -Destination ($script:StateFile + '.bak') -Force } catch {}
+        }
+        Move-Item -LiteralPath $tmp -Destination $script:StateFile -Force
+    } catch {
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch {}
+    }
 }
 
 # ============================================================

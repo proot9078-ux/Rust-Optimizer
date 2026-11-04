@@ -1,4 +1,13 @@
 ﻿# ============================================================
+#  ОТЧЁТ О НАДЁЖНОСТИ (без интерфейса)
+# ============================================================
+if ($Verify) {
+    $script:SuppressSave = $true
+    Write-Host (Get-TrustReportText)
+    exit 0
+}
+
+# ============================================================
 #  БЫСТРЫЕ ПРОВЕРКИ (без интерфейса)
 # ============================================================
 if ($SelfTest) {
@@ -268,6 +277,65 @@ if ($SelfTest) {
         if ($txt -notmatch 'grass\.displacement false') { Write-Host 'CFG MERGE VALUE FAILED'; $fail++ }
     } catch { Write-Host ('CFG MERGE ERROR: ' + $_.Exception.Message); $fail++ }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+
+    # Профили и проверяемый отчёт о надёжности (v5.1)
+    foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',
+                    'Get-AuditSourcePath', 'Get-SourceFingerprint', 'Get-TrustScan',
+                    'Get-BackupStats', 'Get-TrustReportText', 'Get-PlanText',
+                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING RELIABILITY FUNCTION: ' + $fn); $fail++
+        }
+    }
+
+    try {
+        $plan = Get-PlanText
+        if (-not $plan -or $plan.Length -lt 50) { Write-Host 'PLAN TEXT EMPTY'; $fail++ }
+        elseif ($plan -notmatch 'ПЛАН ОПТИМИЗАЦИИ') { Write-Host 'PLAN TEXT BROKEN'; $fail++ }
+    } catch { Write-Host ('PLAN TEXT ERROR: ' + $_.Exception.Message); $fail++ }
+
+    try {
+        $scan = Get-TrustScan
+        if (-not $scan.Scanned) { Write-Host 'TRUST SCAN DID NOT READ SOURCE'; $fail++ }
+        if ($scan.Total -ne 0) {
+            Write-Host ('TRUST SCAN RISKY HITS: ' + $scan.Total)
+            foreach ($it in $scan.Items) { if ($it.Hits -gt 0) { Write-Host ('  ' + $it.Name + ' = ' + $it.Hits) } }
+            $fail++
+        }
+        $fp = Get-SourceFingerprint
+        if (-not $fp -or -not $fp.SHA256 -or $fp.SHA256.Length -ne 64) { Write-Host 'SOURCE FINGERPRINT BROKEN'; $fail++ }
+    } catch { Write-Host ('TRUST SCAN ERROR: ' + $_.Exception.Message); $fail++ }
+
+    # Экспорт/импорт профиля: только известные флаги, без исполнения кода.
+    $oldEnabledMap = $script:Enabled
+    $oldStateEnabled = $script:State['Enabled']
+    $profTmp = Join-Path $env:TEMP ('rustopt-profile-' + [Guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $probeId = [string]$script:Tweaks[0].Id
+        $script:Enabled = @{}
+        foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = $false }
+        $script:Enabled[$probeId] = $true
+        $null = Export-OptimizerProfile -Path $profTmp
+        if (-not (Test-Path -LiteralPath $profTmp)) { Write-Host 'PROFILE EXPORT FAILED'; $fail++ }
+        else {
+            $json = Get-Content -LiteralPath $profTmp -Raw -Encoding UTF8
+            if ($json -notmatch '"enabled"') { Write-Host 'PROFILE JSON BROKEN'; $fail++ }
+            $script:Enabled[$probeId] = $false
+            $res = Import-OptimizerProfile -Path $profTmp
+            if (-not $script:Enabled[$probeId]) { Write-Host 'PROFILE IMPORT DID NOT RESTORE FLAG'; $fail++ }
+            if ($res.Applied -lt 1) { Write-Host 'PROFILE IMPORT APPLIED ZERO'; $fail++ }
+        }
+        [IO.File]::WriteAllText($profTmp, '{ this is not json', (New-Object System.Text.UTF8Encoding($false)))
+        $threw = $false
+        try { $null = Import-OptimizerProfile -Path $profTmp } catch { $threw = $true }
+        if (-not $threw) { Write-Host 'PROFILE IMPORT ACCEPTED INVALID JSON'; $fail++ }
+    } catch {
+        Write-Host ('PROFILE CHECK ERROR: ' + $_.Exception.Message); $fail++
+    } finally {
+        $script:Enabled = $oldEnabledMap
+        if ($null -eq $oldStateEnabled) { $script:State.Remove('Enabled') } else { $script:State['Enabled'] = $oldStateEnabled }
+        Remove-Item -LiteralPath $profTmp -Force -ErrorAction SilentlyContinue
+    }
 
     if ($fail -gt 0) {
         Write-Host ("SELFTEST FAILED: " + $fail + " issue(s)")

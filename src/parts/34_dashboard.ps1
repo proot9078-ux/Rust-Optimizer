@@ -322,7 +322,16 @@ function Show-HomePanel {
         $b.Add_Click($bd.Action)
         $script:RowHost.Controls.Add($b)
     }
-    $y += (($bh + (S 8)) * 3) + (S 4)
+    $y += (($bh + (S 8)) * 3)
+
+    $btnPlan = New-Object RustSuite.FlatButton
+    $btnPlan.Style  = 'Ghost'
+    $btnPlan.Text   = '≡  ПРОВЕРИТЬ ПЛАН ПЕРЕД ПРИМЕНЕНИЕМ'
+    $btnPlan.Font   = [RustSuite.Theme]::FSmall
+    $btnPlan.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, $bh
+    $btnPlan.Add_Click({ Show-PlanPreview })
+    $script:RowHost.Controls.Add($btnPlan)
+    $y += $bh + (S 12)
 
     # ---------- Пояснение ----------
     $note = New-Object System.Windows.Forms.Label

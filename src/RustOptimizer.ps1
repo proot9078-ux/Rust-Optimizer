@@ -1,15 +1,15 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.0
+#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.1
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
-param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut)
+param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Verify)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.0'
+$script:AppVersion   = '5.1'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -61,6 +61,13 @@ try {
 if (Test-Path -LiteralPath $script:StateFile) {
     try { $script:State = Import-Clixml -LiteralPath $script:StateFile } catch { $script:State = @{} }
 }
+# Если основной state.xml повреждён (обрыв записи, сбой питания), пробуем .bak.
+if (-not ($script:State -is [hashtable]) -or $script:State.Count -eq 0) {
+    $bak = $script:StateFile + '.bak'
+    if (Test-Path -LiteralPath $bak) {
+        try { $script:State = Import-Clixml -LiteralPath $bak } catch { $script:State = @{} }
+    }
+}
 if (-not ($script:State -is [hashtable])) { $script:State = @{} }
 
 # Закрывать ли оптимизатор автоматически после успешного запуска RUST.
@@ -68,9 +75,20 @@ if ($null -ne $script:State['AutoClose']) {
     $script:AutoClose = [bool]$script:State['AutoClose']
 }
 
+# Атомарная запись состояния: сначала во временный файл, затем подмена.
+# Так сбой или закрытие окна не оставит полупустой state.xml.
 function Save-State {
     if ($script:SuppressSave) { return }
-    try { $script:State | Export-Clixml -LiteralPath $script:StateFile -Depth 6 -Force } catch {}
+    $tmp = $script:StateFile + '.new'
+    try {
+        $script:State | Export-Clixml -LiteralPath $tmp -Depth 6 -Force
+        if (Test-Path -LiteralPath $script:StateFile) {
+            try { Copy-Item -LiteralPath $script:StateFile -Destination ($script:StateFile + '.bak') -Force } catch {}
+        }
+        Move-Item -LiteralPath $tmp -Destination $script:StateFile -Force
+    } catch {
+        try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch {}
+    }
 }
 
 # ============================================================
@@ -5321,6 +5339,311 @@ try { $null = [RustSuite.Theme] } catch {
 }
 
 # ============================================================
+#  ПРОФИЛИ: экспорт и импорт выбранных модулей
+#  Формат — обычный JSON. Код из файла не исполняется:
+#  импортируются только логические флаги известных модулей.
+# ============================================================
+function Get-ProfileState {
+    $enabled = [ordered]@{}
+    foreach ($t in $script:Tweaks) {
+        $enabled[$t.Id] = [bool]$script:Enabled[$t.Id]
+    }
+    return $enabled
+}
+
+function Export-OptimizerProfile {
+    param([string]$Path)
+    if (-not $Path) { throw 'Не указан путь для сохранения профиля' }
+    $data = [ordered]@{
+        app     = 'PURPLE RUSH'
+        version = [string]$script:AppVersion
+        created = (Get-Date).ToString('s')
+        total   = @($script:Tweaks).Count
+        enabled = (Get-ProfileState)
+    }
+    $json = $data | ConvertTo-Json -Depth 4
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    [IO.File]::WriteAllText($Path, $json, (New-Object System.Text.UTF8Encoding($true)))
+    Write-Log ('Профиль сохранён: ' + $Path) 'ok'
+    return $Path
+}
+
+function Import-OptimizerProfile {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+        throw 'Файл профиля не найден'
+    }
+    $fi = Get-Item -LiteralPath $Path
+    if ($fi.Length -gt 1MB) { throw 'Файл профиля слишком большой (ожидается JSON до 1 МБ)' }
+
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    $data = $null
+    try { $data = $raw | ConvertFrom-Json } catch { throw 'Файл не является корректным JSON' }
+    if (-not $data -or -not $data.enabled) { throw 'В профиле нет блока enabled' }
+
+    $known = @{}
+    foreach ($t in $script:Tweaks) { $known[$t.Id] = $true }
+
+    $applied = 0
+    $skipped = 0
+    foreach ($p in @($data.enabled.PSObject.Properties)) {
+        if ($p -and $known.ContainsKey([string]$p.Name)) {
+            $script:Enabled[[string]$p.Name] = [bool]$p.Value
+            $applied = $applied + 1
+        } else {
+            $skipped = $skipped + 1
+        }
+    }
+    if ($applied -eq 0) { throw 'В профиле нет ни одного известного модуля' }
+
+    $script:State['Enabled'] = $script:Enabled
+    Save-State
+    Write-Log ("Профиль загружен: применено $applied, пропущено неизвестных $skipped") 'ok'
+    return @{ Applied = $applied; Skipped = $skipped }
+}
+
+# ============================================================
+#  ДОВЕРИЕ И ПЛАН: проверяемый отчёт и предпросмотр изменений
+#  Отчёт не требует интернета: он читает собственный исходник
+#  и считает опасные шаблоны. Ноль находок — проверяемый факт.
+# ============================================================
+function Get-AuditSourcePath {
+    $candidates = @()
+    try {
+        if ($PSScriptRoot) {
+            $candidates += (Join-Path $PSScriptRoot 'RustOptimizer.ps1')
+            $candidates += (Join-Path (Split-Path -Parent $PSScriptRoot) 'src\RustOptimizer.ps1')
+        }
+    } catch {}
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    return $null
+}
+
+function Get-SourceFingerprint {
+    $p = Get-AuditSourcePath
+    if (-not $p) { return $null }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($p)
+        try { $hash = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
+        $hex = ($hash | ForEach-Object { $_.ToString('x2') }) -join ''
+        return [pscustomobject]@{
+            Path   = $p
+            Bytes  = (Get-Item -LiteralPath $p).Length
+            SHA256 = $hex
+        }
+    } finally { $sha.Dispose() }
+}
+
+# Шаблоны собираются из частей, чтобы отчёт не находил сам себя.
+function Get-TrustScan {
+    $p = Get-AuditSourcePath
+    $categories = @(
+        @{ Name = 'Сетевые загрузки';        Needles = @(('Invoke-' + 'WebRequest'), ('Invoke-' + 'RestMethod'), ('Download' + 'String'), ('Download' + 'File'), ('Web' + 'Client'), ('Start-' + 'BitsTransfer')) },
+        @{ Name = 'Внедрение в процесс';     Needles = @(('Write' + 'ProcessMemory'), ('Create' + 'RemoteThread'), ('Virtual' + 'AllocEx'), ('Open' + 'Process'), ('SetWindows' + 'HookEx')) },
+        @{ Name = 'Динамический код';        Needles = @(('Invoke-' + 'Expression'), ('From' + 'Base64String'), ('Assembly' + ']::Load')) },
+        @{ Name = 'Изменение клиента игры';  Needles = @(('RustClient' + '.exe.*Set-Content'), ('RustClient' + '.exe.*Copy-Item'), ('RustClient' + '.exe.*Remove-Item')) }
+    )
+    $text = ''
+    if ($p) { try { $text = [IO.File]::ReadAllText($p) } catch { $text = '' } }
+    $result = @()
+    $total = 0
+    foreach ($c in $categories) {
+        $hits = 0
+        foreach ($n in $c.Needles) {
+            if (-not $n -or -not $text) { continue }
+            try {
+                $hits = $hits + ([regex]::Matches($text, [string]$n, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)).Count
+            } catch {}
+        }
+        $total = $total + $hits
+        $result += [pscustomobject]@{ Name = $c.Name; Hits = $hits }
+    }
+    return [pscustomobject]@{ Items = $result; Total = $total; Scanned = [bool]($text.Length -gt 0) }
+}
+
+function Get-BackupStats {
+    $reg = 0
+    $cfg = 0
+    try { if (Test-Path -LiteralPath $script:RegBackup) { $reg = @(Get-ChildItem -LiteralPath $script:RegBackup -File -ErrorAction SilentlyContinue).Count } } catch {}
+    try { if (Test-Path -LiteralPath $script:RustBackup) { $cfg = @(Get-ChildItem -LiteralPath $script:RustBackup -File -ErrorAction SilentlyContinue).Count } } catch {}
+    return @{ Reg = $reg; Cfg = $cfg }
+}
+
+function Get-TrustReportText {
+    $fp = Get-SourceFingerprint
+    $scan = Get-TrustScan
+    $bk = Get-BackupStats
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('PURPLE RUSH — ОТЧЁТ О НАДЁЖНОСТИ')
+    [void]$sb.AppendLine(('Версия            : ' + $script:AppVersion))
+    [void]$sb.AppendLine(('PowerShell        : ' + $PSVersionTable.PSVersion.ToString()))
+    [void]$sb.AppendLine(('Права              : ' + $(if ($script:IsAdmin) { 'администратор' } else { 'обычный пользователь' })))
+    [void]$sb.AppendLine(('Лицензия           : MIT, исходный код открыт'))
+    [void]$sb.AppendLine('')
+    if ($fp) {
+        [void]$sb.AppendLine(('Исходник           : ' + $fp.Path))
+        [void]$sb.AppendLine(('Размер             : ' + [math]::Round($fp.Bytes / 1KB, 1) + ' КБ'))
+        [void]$sb.AppendLine(('SHA256             : ' + $fp.SHA256))
+    } else {
+        [void]$sb.AppendLine('Исходник           : не найден рядом с приложением')
+    }
+    [void]$sb.AppendLine(('Модулей            : ' + @($script:Tweaks).Count))
+    [void]$sb.AppendLine(('Резервные копии    : реестр ' + $bk.Reg + ' · cfg ' + $bk.Cfg))
+    [void]$sb.AppendLine(('Состояние          : ' + $(if (Test-Path -LiteralPath $script:StateFile) { 'state.xml на месте' } else { 'будет создан при первом сохранении' })))
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('СТАТИЧЕСКИЙ АУДИТ ИСХОДНИКА')
+    foreach ($it in $scan.Items) {
+        [void]$sb.AppendLine(('  {0,-26} {1}' -f ($it.Name + ':'), $it.Hits))
+    }
+    [void]$sb.AppendLine(('  ИТОГО опасных совпадений: ' + $scan.Total))
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('КАК ЭТО ЧИТАТЬ')
+    [void]$sb.AppendLine('  0 сетевых загрузок — программа не скачивает и не запускает код из интернета.')
+    [void]$sb.AppendLine('  0 внедрений в процесс — нет инъекций, хуков и чтения памяти игры.')
+    [void]$sb.AppendLine('  0 изменений клиента — RustClient.exe и *.dll не перезаписываются.')
+    [void]$sb.AppendLine('  Меняются только официальные cfg-файлы игры, реестр Windows и настройки системы.')
+    [void]$sb.AppendLine('  Перед применением создаётся точка восстановления и резервные копии реестра/cfg.')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('Подпись кода: нет. Это открытый PowerShell-проект: любой может прочитать')
+    [void]$sb.AppendLine('src\parts\*.ps1, собрать его через rebuild-bat.ps1 и сравнить SHA256.')
+    return $sb.ToString()
+}
+
+function Get-PlanText {
+    $on = @($script:Tweaks | Where-Object { $script:Enabled[$_.Id] })
+    $all = @($script:Tweaks)
+    $map = @{ home = 'ОБЗОР'; sys = 'СИСТЕМА'; net = 'СЕТЬ'; rust = 'RUST';
+              picture = 'КАРТИНКА'; binds = 'БИНДЫ'; clean = 'ОЧИСТКА';
+              repair = 'РЕМОНТ'; settings = 'НАСТРОЙКИ' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine('ПЛАН ОПТИМИЗАЦИИ — ПРЕДПРОСМОТР')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine(('Включено модулей : {0} из {1}' -f $on.Count, $all.Count))
+    [void]$sb.AppendLine(('Рискованных      : {0}' -f @($on | Where-Object { $_.Risk }).Count))
+    [void]$sb.AppendLine('')
+    foreach ($g in @('sys', 'net', 'rust', 'clean')) {
+        $items = @($on | Where-Object { $_.Group -eq $g })
+        if ($items.Count -eq 0) { continue }
+        [void]$sb.AppendLine(('[' + $map[$g] + ']  ' + $items.Count + ' шт.'))
+        foreach ($t in $items) {
+            $mark = if ($t.Risk) { '●' } else { '·' }
+            [void]$sb.AppendLine(('   ' + $mark + ' ' + $t.Name))
+        }
+        [void]$sb.AppendLine('')
+    }
+    $risk = @($on | Where-Object { $_.Risk })
+    if ($risk.Count -gt 0) {
+        [void]$sb.AppendLine('МОДУЛИ С ПОМЕТКОЙ ● — включайте осознанно:')
+        foreach ($t in $risk) { [void]$sb.AppendLine(('   ● ' + $t.Name + ' — ' + $t.Desc)) }
+        [void]$sb.AppendLine('')
+    }
+    [void]$sb.AppendLine('Это только предпросмотр: до нажатия «ОПТИМИЗИРОВАТЬ» ничего не меняется.')
+    [void]$sb.AppendLine('Перед применением создаётся точка восстановления и резервные копии.')
+    return $sb.ToString()
+}
+
+function Show-TextDialog {
+    param([string]$Title, [string]$Text, [string]$Note = '')
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = $Title
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.FormBorderStyle = 'Sizable'
+    $dlg.MinimizeBox     = $false
+    $dlg.MaximizeBox     = $false
+    $dlg.BackColor       = [RustSuite.Theme]::Bg
+    $dlg.ForeColor       = [RustSuite.Theme]::TextC
+    $dlg.Font            = [RustSuite.Theme]::FSub
+    $dlg.Size            = New-Object System.Drawing.Size (S 720), (S 560)
+    $dlg.MinimumSize     = New-Object System.Drawing.Size (S 520), (S 400)
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text      = $Title
+    $head.Font      = [RustSuite.Theme]::FName
+    $head.ForeColor = [RustSuite.Theme]::AccentLt
+    $head.BackColor = [System.Drawing.Color]::Transparent
+    $head.Dock      = 'Top'
+    $head.Height    = S 34
+    $head.Padding   = New-Object System.Windows.Forms.Padding (S 14), (S 10), 0, 0
+
+    $box = New-Object System.Windows.Forms.RichTextBox
+    $box.Dock        = 'Fill'
+    $box.BorderStyle = 'None'
+    $box.ReadOnly    = $true
+    $box.WordWrap    = $false
+    $box.BackColor   = [RustSuite.Theme]::Field
+    $box.ForeColor   = [RustSuite.Theme]::TextC
+    $box.Font        = [RustSuite.Theme]::FMono
+    $box.Text        = $Text
+    $box.DetectUrls  = $false
+
+    $note = New-Object System.Windows.Forms.Label
+    $note.Text      = $Note
+    $note.Font      = [RustSuite.Theme]::FSmall
+    $note.ForeColor = [RustSuite.Theme]::Muted
+    $note.BackColor = [System.Drawing.Color]::Transparent
+    $note.Dock      = 'Bottom'
+    $note.Height    = S 24
+    $note.Padding   = New-Object System.Windows.Forms.Padding (S 14), (S 4), 0, 0
+
+    $bar = New-Object System.Windows.Forms.Panel
+    $bar.Dock      = 'Bottom'
+    $bar.Height    = S 50
+    $bar.BackColor = [RustSuite.Theme]::PanelBg
+    $bar.Padding   = New-Object System.Windows.Forms.Padding (S 12), (S 9), (S 12), (S 9)
+
+    $btnCopy = New-Object RustSuite.FlatButton
+    $btnCopy.Style  = 'Ghost'
+    $btnCopy.Text   = 'КОПИРОВАТЬ'
+    $btnCopy.Font   = [RustSuite.Theme]::FSmall
+    $btnCopy.Width  = S 160
+    $btnCopy.Dock   = 'Left'
+
+    $btnClose = New-Object RustSuite.FlatButton
+    $btnClose.Style  = 'Primary'
+    $btnClose.Text   = 'ЗАКРЫТЬ'
+    $btnClose.Font   = [RustSuite.Theme]::FSmall
+    $btnClose.Width  = S 160
+    $btnClose.Dock   = 'Right'
+
+    $btnCopy.Add_Click({
+        try { [System.Windows.Forms.Clipboard]::SetText($box.Text) } catch {}
+    })
+    $btnClose.Add_Click({ $dlg.Close() })
+
+    $bar.Controls.Add($btnClose)
+    $bar.Controls.Add($btnCopy)
+    $dlg.Controls.Add($box)
+    $dlg.Controls.Add($head)
+    $dlg.Controls.Add($note)
+    $dlg.Controls.Add($bar)
+    $dlg.Add_Shown({ try { [void][RustSuite.Native]::DarkTitle($dlg) } catch {} })
+
+    try {
+        if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+            $dlg.ShowDialog($script:MainForm)
+        } else {
+            $dlg.ShowDialog()
+        }
+    } finally {
+        try { $dlg.Dispose() } catch {}
+    }
+}
+
+function Show-PlanPreview {
+    Show-TextDialog 'ПЛАН ОПТИМИЗАЦИИ' (Get-PlanText) 'Предпросмотр ничего не изменяет. Закройте окно и нажмите «ОПТИМИЗИРОВАТЬ».'
+}
+
+function Show-TrustReport {
+    Show-TextDialog 'ОТЧЁТ О НАДЁЖНОСТИ' (Get-TrustReportText) 'Отчёт построен по локальному исходнику. Скопируйте его и сравните SHA256 с релизом на GitHub.'
+}
+
+# ============================================================
 #  ОБЗОР — новая стартовая панель v5.0
 #  Живой кольцевой индикатор, графики нагрузки и быстрые действия.
 # ============================================================
@@ -5644,7 +5967,16 @@ function Show-HomePanel {
         $b.Add_Click($bd.Action)
         $script:RowHost.Controls.Add($b)
     }
-    $y += (($bh + (S 8)) * 3) + (S 4)
+    $y += (($bh + (S 8)) * 3)
+
+    $btnPlan = New-Object RustSuite.FlatButton
+    $btnPlan.Style  = 'Ghost'
+    $btnPlan.Text   = '≡  ПРОВЕРИТЬ ПЛАН ПЕРЕД ПРИМЕНЕНИЕМ'
+    $btnPlan.Font   = [RustSuite.Theme]::FSmall
+    $btnPlan.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, $bh
+    $btnPlan.Add_Click({ Show-PlanPreview })
+    $script:RowHost.Controls.Add($btnPlan)
+    $y += $bh + (S 12)
 
     # ---------- Пояснение ----------
     $note = New-Object System.Windows.Forms.Label
@@ -5661,6 +5993,15 @@ function Show-HomePanel {
 
     $script:RowHost.AutoScrollMinSize = New-Object System.Drawing.Size 0, $y
     Update-HomeLive
+}
+
+# ============================================================
+#  ОТЧЁТ О НАДЁЖНОСТИ (без интерфейса)
+# ============================================================
+if ($Verify) {
+    $script:SuppressSave = $true
+    Write-Host (Get-TrustReportText)
+    exit 0
 }
 
 # ============================================================
@@ -5933,6 +6274,65 @@ if ($SelfTest) {
         if ($txt -notmatch 'grass\.displacement false') { Write-Host 'CFG MERGE VALUE FAILED'; $fail++ }
     } catch { Write-Host ('CFG MERGE ERROR: ' + $_.Exception.Message); $fail++ }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+
+    # Профили и проверяемый отчёт о надёжности (v5.1)
+    foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',
+                    'Get-AuditSourcePath', 'Get-SourceFingerprint', 'Get-TrustScan',
+                    'Get-BackupStats', 'Get-TrustReportText', 'Get-PlanText',
+                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING RELIABILITY FUNCTION: ' + $fn); $fail++
+        }
+    }
+
+    try {
+        $plan = Get-PlanText
+        if (-not $plan -or $plan.Length -lt 50) { Write-Host 'PLAN TEXT EMPTY'; $fail++ }
+        elseif ($plan -notmatch 'ПЛАН ОПТИМИЗАЦИИ') { Write-Host 'PLAN TEXT BROKEN'; $fail++ }
+    } catch { Write-Host ('PLAN TEXT ERROR: ' + $_.Exception.Message); $fail++ }
+
+    try {
+        $scan = Get-TrustScan
+        if (-not $scan.Scanned) { Write-Host 'TRUST SCAN DID NOT READ SOURCE'; $fail++ }
+        if ($scan.Total -ne 0) {
+            Write-Host ('TRUST SCAN RISKY HITS: ' + $scan.Total)
+            foreach ($it in $scan.Items) { if ($it.Hits -gt 0) { Write-Host ('  ' + $it.Name + ' = ' + $it.Hits) } }
+            $fail++
+        }
+        $fp = Get-SourceFingerprint
+        if (-not $fp -or -not $fp.SHA256 -or $fp.SHA256.Length -ne 64) { Write-Host 'SOURCE FINGERPRINT BROKEN'; $fail++ }
+    } catch { Write-Host ('TRUST SCAN ERROR: ' + $_.Exception.Message); $fail++ }
+
+    # Экспорт/импорт профиля: только известные флаги, без исполнения кода.
+    $oldEnabledMap = $script:Enabled
+    $oldStateEnabled = $script:State['Enabled']
+    $profTmp = Join-Path $env:TEMP ('rustopt-profile-' + [Guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $probeId = [string]$script:Tweaks[0].Id
+        $script:Enabled = @{}
+        foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = $false }
+        $script:Enabled[$probeId] = $true
+        $null = Export-OptimizerProfile -Path $profTmp
+        if (-not (Test-Path -LiteralPath $profTmp)) { Write-Host 'PROFILE EXPORT FAILED'; $fail++ }
+        else {
+            $json = Get-Content -LiteralPath $profTmp -Raw -Encoding UTF8
+            if ($json -notmatch '"enabled"') { Write-Host 'PROFILE JSON BROKEN'; $fail++ }
+            $script:Enabled[$probeId] = $false
+            $res = Import-OptimizerProfile -Path $profTmp
+            if (-not $script:Enabled[$probeId]) { Write-Host 'PROFILE IMPORT DID NOT RESTORE FLAG'; $fail++ }
+            if ($res.Applied -lt 1) { Write-Host 'PROFILE IMPORT APPLIED ZERO'; $fail++ }
+        }
+        [IO.File]::WriteAllText($profTmp, '{ this is not json', (New-Object System.Text.UTF8Encoding($false)))
+        $threw = $false
+        try { $null = Import-OptimizerProfile -Path $profTmp } catch { $threw = $true }
+        if (-not $threw) { Write-Host 'PROFILE IMPORT ACCEPTED INVALID JSON'; $fail++ }
+    } catch {
+        Write-Host ('PROFILE CHECK ERROR: ' + $_.Exception.Message); $fail++
+    } finally {
+        $script:Enabled = $oldEnabledMap
+        if ($null -eq $oldStateEnabled) { $script:State.Remove('Enabled') } else { $script:State['Enabled'] = $oldStateEnabled }
+        Remove-Item -LiteralPath $profTmp -Force -ErrorAction SilentlyContinue
+    }
 
     if ($fail -gt 0) {
         Write-Host ("SELFTEST FAILED: " + $fail + " issue(s)")
@@ -6466,6 +6866,76 @@ function Show-SettingsPanel {
     })
     $script:RowHost.Controls.Add($btnShortcut)
     $y += S 42
+
+    # --- Профили и отчёт о надёжности (v5.1) ---
+    $lblProf = New-Object System.Windows.Forms.Label
+    $lblProf.Text      = 'ПРОФИЛИ И ПРОВЕРКА НАДЁЖНОСТИ'
+    $lblProf.Font      = [RustSuite.Theme]::FHead
+    $lblProf.ForeColor = [RustSuite.Theme]::Muted
+    $lblProf.BackColor = [System.Drawing.Color]::Transparent
+    $lblProf.AutoSize  = $false
+    $lblProf.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $w, (S 16)
+    $script:RowHost.Controls.Add($lblProf)
+    $y += S 24
+
+    $halfW = [int](($w - (S 8)) / 2)
+    $btnExport = New-Object RustSuite.FlatButton
+    $btnExport.Style  = 'Ghost'
+    $btnExport.Text   = 'ЭКСПОРТ ПРОФИЛЯ'
+    $btnExport.Font   = [RustSuite.Theme]::FSmall
+    $btnExport.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 34)
+    $btnExport.Add_Click({
+        $dlg = New-Object System.Windows.Forms.SaveFileDialog
+        try {
+            $dlg.Title      = 'Экспорт профиля PURPLE RUSH'
+            $dlg.Filter     = 'Профиль PURPLE RUSH (*.json)|*.json|Все файлы (*.*)|*.*'
+            $dlg.FileName   = 'purple-rush-profile.json'
+            $dlg.DefaultExt = 'json'
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                try {
+                    $null = Export-OptimizerProfile -Path $dlg.FileName
+                    Set-Status 'Профиль сохранён в JSON' '#4ECB71'
+                } catch {
+                    Set-Status ('Ошибка экспорта: ' + $_.Exception.Message) '#FF6B62'
+                }
+            }
+        } finally { $dlg.Dispose() }
+    })
+    $script:RowHost.Controls.Add($btnExport)
+
+    $btnImport = New-Object RustSuite.FlatButton
+    $btnImport.Style  = 'Ghost'
+    $btnImport.Text   = 'ИМПОРТ ПРОФИЛЯ'
+    $btnImport.Font   = [RustSuite.Theme]::FSmall
+    $btnImport.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, $halfW, (S 34)
+    $btnImport.Add_Click({
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        try {
+            $dlg.Title       = 'Импорт профиля PURPLE RUSH'
+            $dlg.Filter      = 'Профиль PURPLE RUSH (*.json)|*.json|Все файлы (*.*)|*.*'
+            $dlg.CheckFileExists = $true
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                try {
+                    $res = Import-OptimizerProfile -Path $dlg.FileName
+                    Set-Status ('Профиль применён: ' + $res.Applied + ' модулей') '#4ECB71'
+                    Show-Group 'settings'
+                } catch {
+                    Set-Status ('Ошибка импорта: ' + $_.Exception.Message) '#FF6B62'
+                }
+            }
+        } finally { $dlg.Dispose() }
+    })
+    $script:RowHost.Controls.Add($btnImport)
+    $y += S 44
+
+    $btnTrust = New-Object RustSuite.FlatButton
+    $btnTrust.Style  = 'Ghost'
+    $btnTrust.Text   = 'ОТЧЁТ О НАДЁЖНОСТИ · ЧТО ИМЕННО МЕНЯЕТСЯ'
+    $btnTrust.Font   = [RustSuite.Theme]::FSmall
+    $btnTrust.Bounds = New-Object System.Drawing.Rectangle 0, $y, $w, (S 34)
+    $btnTrust.Add_Click({ Show-TrustReport })
+    $script:RowHost.Controls.Add($btnTrust)
+    $y += S 46
 
     # --- Мониторинг ---
     $lblMon = New-Object System.Windows.Forms.Label
