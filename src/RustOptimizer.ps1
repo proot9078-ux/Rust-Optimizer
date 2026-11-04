@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  PURPLE RUSH - RUST PERFORMANCE ENGINE  v5.2
+#  PURPLE RUSH - RUST PERFORMANCE ENGINE  v5.3
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.2'
+$script:AppVersion   = '5.3'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -505,7 +505,9 @@ if ($InstallShortcut) {
 # Два одновременно запущенных окна могут мешать друг другу при записи
 # cfg/состояния, поэтому второй запуск просто поднимает уже открытое окно.
 $script:SingleInstance = $null
-if (-not $SelfTest -and -not $TestUi) {
+# Консольные режимы (-SelfTest, -TestUi, -Verify) не должны блокироваться
+# открытым окном: иначе проверка молча завершается без отчёта.
+if (-not $SelfTest -and -not $TestUi -and -not $Verify) {
     try {
         $mutexName = 'Local\PurpleRush.RustOptimizer.' + $env:USERNAME
         $mutex = New-Object System.Threading.Mutex($false, $mutexName)

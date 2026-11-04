@@ -98,7 +98,9 @@ if ($InstallShortcut) {
 # Два одновременно запущенных окна могут мешать друг другу при записи
 # cfg/состояния, поэтому второй запуск просто поднимает уже открытое окно.
 $script:SingleInstance = $null
-if (-not $SelfTest -and -not $TestUi) {
+# Консольные режимы (-SelfTest, -TestUi, -Verify) не должны блокироваться
+# открытым окном: иначе проверка молча завершается без отчёта.
+if (-not $SelfTest -and -not $TestUi -and -not $Verify) {
     try {
         $mutexName = 'Local\PurpleRush.RustOptimizer.' + $env:USERNAME
         $mutex = New-Object System.Threading.Mutex($false, $mutexName)

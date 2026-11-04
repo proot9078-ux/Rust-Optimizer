@@ -3,6 +3,7 @@
 [![CI](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 [![PowerShell 5.1](https://img.shields.io/badge/PowerShell-5.1-blue.svg)](https://learn.microsoft.com/powershell/)
+[![Release](https://img.shields.io/github/v/release/proot9078-ux/Rust-Optimizer?color=a03ce0)](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest)
 
 <p align="center">
   <img src="assets/app-icon.png" width="144" alt="PURPLE RUSH icon">
@@ -10,11 +11,38 @@
 
 Открытый оптимизатор Windows под игру **RUST** с глубокой очисткой, диагностикой и восстановлением системы. Полностью читаемый исходный код, без обфускации, скрытых бинарников и «магических» твиков.
 
-> **Версия 5.2** · 57 модулей · 12 анимированных тем · плавный интерфейс без холостых анимаций · проверка целостности клиента RUST · атомарное состояние · профили в JSON · предпросмотр плана · отчёт о надёжности `-Verify`.
+> **Версия 5.3** · 57 модулей · 12 анимированных тем · плавный интерфейс без холостых анимаций · проверка целостности клиента RUST · атомарное состояние · профили в JSON · предпросмотр плана · отчёт о надёжности `-Verify`.
 
 ---
 
-## Что нового в 5.2
+## Почему PURPLE RUSH — лучший открытый оптимизатор под RUST
+
+Не потому, что так написано на красивой картинке, а по шести проверяемым критериям. Их можно перепроверить за три минуты — исходник лежит в этом же репозитории.
+
+| Критерий | PURPLE RUSH | Типичный закрытый «твикер» |
+|---|---|---|
+| **Открытый код и сборка** | 18 читаемых частей `src/parts/*.ps1`, MIT, сборка одной командой | Бинарник или обфускация |
+| **Клиент игры не трогается** | Только официальные `cfg\client.cfg` и `cfg\keys.cfg`; снимок клиента до/после | Патчи файлов, DLL, текстуры |
+| **Нет доступа к памяти и инъекций** | Нет чтения/записи памяти, оверлеев, ReShade, Freestyle | Часто ядро «буста FPS» |
+| **Обратимость** | Точка восстановления, бэкапы, журнал, кнопка «ОТКАТ», JSON-профили | «Поверь, что стало лучше» |
+| **Проверяемость** | `-Verify` с SHA256 и аудитом, `-SelfTest`, `-TestUi`, отчёт в UI | Ничего нельзя проверить |
+| **Живая разработка** | CI на каждый push, changelog, теги релизов | Редкие «сборки» без истории |
+
+Подробный разбор критериев, отличий от RustTweaker-подобных сборок и честных ограничений: **[docs/WHY.md](docs/WHY.md)**.
+
+Коротко: программа не изменяет `RustClient.exe` и DLL, не читает память игры, не ставит оверлеи и не скачивает бинарники. Она настраивает Windows и документированные параметры RUST — и доказывает снимком, что клиент остался целым.
+
+---
+
+## Что нового в 5.3
+
+- **Публичная страница «Почему это лучший открытый оптимизатор»** — [docs/WHY.md](docs/WHY.md): шесть проверяемых критериев, отличия от закрытых твикеров, политика обновлений и инструкция «проверь сам за 3 минуты».
+- **Понятное сравнение в README** — таблица «PURPLE RUSH / типичный закрытый твикер» без голословных обещаний: каждый пункт проверяется исходником и `-Verify`.
+- **Честные ограничения на видном месте** — отдельный раздел объясняет, что абсолютной гарантии отсутствия бана не существует, а безопасность обеспечивается отсутствием опасных векторов, а не обещаниями.
+- **Ссылка на релизы и бейдж версии** — сразу видно, что проект живёт и обновляется.
+- Функциональность 5.2 сохранена без изменений: плавный интерфейс, безопасная навигация и защита целостности клиента.
+
+## Что было в 5.2
 
 - **Плавность без нагрузки** — анимации шапки, кольца, графика и полос перерисовываются только когда это нужно. После остановки значения аниматор засыпает, а не крутит 66 кадров/с вхолостую. Прокрутка и переходы остаются плавными, но CPU и батарея не тратятся на статичную картинку.
 - **Безопасная навигация** — панель раздела перестраивается после выхода из обработчика клика (`Request-Group`), а не внутри него. Это убирает редкие подвисания и ошибки при быстром переключении разделов; повторный клик по активному разделу просто прокручивает страницу наверх.
@@ -248,6 +276,7 @@ rebuild-bat.ps1         сборка src + лаунчер + standalone
 assets/                 app-icon.png и multiresolution .ico
 tools/                  make-icon.ps1, install-shortcut.ps1
 docs/SAFETY.md          что чистится, риски ремонта и откат
+docs/WHY.md             почему проект лучший по проверяемым критериям
 dist/                   одиночный .bat (создаётся при сборке, в git не входит)
 .github/workflows/ci.yml сборка, синтаксис и SelfTest в CI
 ```
@@ -282,6 +311,25 @@ dist/                   одиночный .bat (создаётся при сб�
 - Некоторые операции (сброс сети, пересборка иконок, очистка WinSxS) требуют перезагрузки или перезапуска Explorer.
 - Гамма-пресеты действуют на основной монитор и могут сбрасываться после перезагрузки, смены разрешения или выхода из полноэкранной игры. Постоянный цвет настраивается в панели NVIDIA/AMD.
 - Значения реестра и служб могут отличаться на разных сборках Windows; откат возвращает сохранённые исходные значения там, где это предусмотрено.
+
+## Политика обновлений
+
+Проект обновляется постоянно и публично:
+
+- каждая версия получает запись в [CHANGELOG.md](CHANGELOG.md) и тег релиза на GitHub;
+- CI собирает исходник, проверяет синтаксис и запускает `-SelfTest` на каждый push;
+- исправления безопасности и стабильности выходят вне очереди;
+- исходник и SHA256 всегда доступны — обновление не «ломает доверие», а подтверждает его.
+
+Актуальность проверяется за минуту: откройте [последний релиз](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest), сравните версию и SHA256 из `-Verify`, посмотрите дату последнего коммита.
+
+## Why PURPLE RUSH (short English)
+
+PURPLE RUSH is an open-source Windows optimizer for **RUST**, written in readable Windows PowerShell 5.1 with a WinForms UI. It never modifies `RustClient.exe` or game DLLs, never touches process memory, never installs overlays (ReShade/Freestyle), and never downloads binaries. It only changes Windows settings, official `cfg\client.cfg` / `cfg\keys.cfg`, and documented driver-panel options.
+
+Every change is reversible: restore point, registry/cfg backups, applied-module journal, one-click rollback and JSON profiles. Before and after optimization the app snapshots game-client metadata and proves the client is unchanged. `-Verify` prints the source SHA256 and a static audit (network downloads, injection, dynamic code, client modification) that must be **zero**; `-SelfTest` and `-TestUi` validate logic and UI.
+
+There is no absolute ban guarantee from any tool — bans are decided by Facepunch. But PURPLE RUSH removes the actual detection vectors instead of hiding them. Read [docs/WHY.md](docs/WHY.md) and verify everything yourself.
 
 ## Участие
 
