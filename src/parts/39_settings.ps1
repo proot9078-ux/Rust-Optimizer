@@ -3,7 +3,6 @@
 #  ВАЖНО: этот файл загружается ДО 40_ui.ps1, поэтому функция
 #  Show-SettingsPanel уже существует к моменту первого Show-Group.
 # ============================================================
-function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 # ---------- Палитры ----------
 $script:Themes = @(
@@ -130,7 +129,7 @@ function Restart-SettingsSoon {
             try { $script:ThemeTimer.Stop() } catch {}
             # Перестраиваем только если пользователь всё ещё на странице настроек.
             if ($script:ActiveGroup -eq 'settings') {
-                try { Show-Group 'settings' } catch {}
+                try { Request-Group 'settings' -Force } catch {}
             }
         })
         $script:ThemeTimer.Start()
@@ -574,7 +573,7 @@ function Show-SettingsPanel {
                 try {
                     $res = Import-OptimizerProfile -Path $dlg.FileName
                     Set-Status ('Профиль применён: ' + $res.Applied + ' модулей') '#4ECB71'
-                    Show-Group 'settings'
+                    Request-Group 'settings' -Force
                 } catch {
                     Set-Status ('Ошибка импорта: ' + $_.Exception.Message) '#FF6B62'
                 }
@@ -582,6 +581,33 @@ function Show-SettingsPanel {
         } finally { $dlg.Dispose() }
     })
     $script:RowHost.Controls.Add($btnImport)
+    $y += S 44
+
+    $btnGuard = New-Object RustSuite.FlatButton
+    $btnGuard.Style  = 'Ghost'
+    $btnGuard.Text   = 'СВЕРИТЬ КЛИЕНТ RUST'
+    $btnGuard.Font   = [RustSuite.Theme]::FSmall
+    $btnGuard.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 34)
+    $btnGuard.Add_Click({ Show-ClientGuardReport })
+    $script:RowHost.Controls.Add($btnGuard)
+
+    $btnGuardBase = New-Object RustSuite.FlatButton
+    $btnGuardBase.Style  = 'Ghost'
+    $btnGuardBase.Text   = 'ОБНОВИТЬ ЭТАЛОН'
+    $btnGuardBase.Font   = [RustSuite.Theme]::FSmall
+    $btnGuardBase.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, $halfW, (S 34)
+    $btnGuardBase.Add_Click({
+        try {
+            $snap = Save-ClientGuardBaseline
+            if ($snap) {
+                Set-Status ('Эталон клиента обновлён: ' + $snap.Count + ' файлов') '#4ECB71'
+                Write-Log ('Эталон клиента RUST обновлён: ' + $snap.Count + ' файлов') 'ok'
+            } else {
+                Set-Status 'RUST не найден — эталон не снят' '#FF6B62'
+            }
+        } catch { Set-Status ('Ошибка эталона: ' + $_.Exception.Message) '#FF6B62' }
+    })
+    $script:RowHost.Controls.Add($btnGuardBase)
     $y += S 44
 
     $btnTrust = New-Object RustSuite.FlatButton

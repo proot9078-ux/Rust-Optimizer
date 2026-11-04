@@ -335,6 +335,8 @@ function Start-Optimization {
     Set-Busy $true
     try {
         Write-Log ('Запуск оптимизации: модулей — ' + $list.Count) 'step'
+        # Эталон клиента до любых действий: после оптимизации сравним.
+        try { $null = Save-ClientGuardBaseline } catch {}
         New-RestorePoint
         Backup-RegKey 'HKCU:\Control Panel\Mouse' 'Mouse.reg'
 
@@ -357,6 +359,14 @@ function Start-Optimization {
         try { Invoke-RustProcessPolish } catch {}
         $script:State['Enabled'] = $script:Enabled
         Save-State
+        try {
+            $cg = Test-ClientGuard
+            if ($cg.State -eq 'ok') {
+                Write-Log 'Целостность клиента: RustClient.exe и DLL не изменены' 'ok'
+            } elseif ($cg.State -eq 'changed') {
+                Write-Log 'ВНИМАНИЕ: файлы клиента отличаются от эталона. Это не действие оптимизатора — проверьте обновление игры/Steam.' 'warn'
+            }
+        } catch {}
         Set-ProgressValue 100
         Set-Status 'Готово. Перезагрузите ПК для полного эффекта.' '#4ECB71'
         Write-Log 'Оптимизация завершена' 'ok'
@@ -414,6 +424,7 @@ function Invoke-RustOneClick {
     $dir = Get-RustCfgDir
     if (-not $dir) { return 'Не удалось открыть папку cfg игры.' }
 
+    try { $null = Save-ClientGuardBaseline } catch {}
     $wroteCfg = $false
     $wroteBinds = $false
     $errors = @()
@@ -426,6 +437,10 @@ function Invoke-RustOneClick {
         catch { $errors += ('keys.cfg: ' + $_.Exception.Message); Write-Log ('бинды: ' + $_.Exception.Message) 'warn' }
     }
     if ($wroteCfg -or $wroteBinds) { Add-Applied 'rustcfg'; Save-State }
+    try {
+        $cg = Test-ClientGuard
+        if ($cg.State -eq 'ok') { Write-Log 'Целостность клиента после cfg/биндов: файлы не изменены' 'ok' }
+    } catch {}
 
     $cfgCount = if ($wroteCfg) { @($cfgLines).Count } else { 0 }
     $bindCount = if ($wroteBinds) { @($bindLines).Count } else { 0 }

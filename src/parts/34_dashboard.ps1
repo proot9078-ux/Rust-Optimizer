@@ -24,7 +24,7 @@ function Set-ProfileFromHome {
     }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group 'home'
+    Request-Group 'home' -Force
     if ($IncludeRisk) {
         Set-Status 'Профиль «МАКСИМУМ»: включены все модули' '#E3B341'
         Write-Log 'Профиль «МАКСИМУМ»: включены все модули, включая рискованные' 'warn'
@@ -49,7 +49,7 @@ function Start-OptimizationFromHome {
     if ($ans -ne 'Yes') { return }
     try {
         $null = Start-Optimization
-        Show-Group 'home'
+        Request-Group 'home' -Force
         Update-Stats
         Write-Log ("Оптимизация из «ОБЗОРА» завершена: $cnt модулей") 'ok'
         [void][System.Windows.Forms.MessageBox]::Show(
@@ -77,7 +77,7 @@ function Start-RollbackFromHome {
     if ($ans -ne 'Yes') { return }
     try {
         Start-Rollback
-        Show-Group 'home'
+        Request-Group 'home' -Force
         Update-Stats
         [void][System.Windows.Forms.MessageBox]::Show('Откат выполнен.', 'PURPLE RUSH', 'OK', 'Information')
     } catch {
@@ -310,8 +310,8 @@ function Show-HomePanel {
         @{ Text = '⚡  МАКСИМУМ'; X = ($half + (S 8)); Y = 0; Style = 'Ghost'; Action = { Set-ProfileFromHome $true } },
         @{ Text = '▶  ОПТИМИЗИРОВАТЬ СЕЙЧАС'; X = 0; Y = ($bh + (S 8)); Style = 'Primary'; Action = { Start-OptimizationFromHome } },
         @{ Text = '↩  ОТКАТИТЬ ИЗМЕНЕНИЯ'; X = ($half + (S 8)); Y = ($bh + (S 8)); Style = 'Ghost'; Action = { Start-RollbackFromHome } },
-        @{ Text = '◈  ДИАГНОСТИКА WINDOWS'; X = 0; Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'repair' } },
-        @{ Text = '◐  ТЕМЫ И НАСТРОЙКИ'; X = ($half + (S 8)); Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'settings' } }
+        @{ Text = '◈  ДИАГНОСТИКА WINDOWS'; X = 0; Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Request-Group 'repair' } },
+        @{ Text = '◐  ТЕМЫ И НАСТРОЙКИ'; X = ($half + (S 8)); Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Request-Group 'settings' } }
     )
     foreach ($bd in $buttons) {
         $b = New-Object RustSuite.FlatButton

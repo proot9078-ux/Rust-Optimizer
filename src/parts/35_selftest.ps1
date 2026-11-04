@@ -282,11 +282,37 @@ if ($SelfTest) {
     foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',
                     'Get-AuditSourcePath', 'Get-SourceFingerprint', 'Get-TrustScan',
                     'Get-BackupStats', 'Get-TrustReportText', 'Get-PlanText',
-                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport') {
+                    'Get-ClientGuardSnapshot', 'Save-ClientGuardBaseline',
+                    'Compare-ClientGuardSnapshots', 'Test-ClientGuard', 'Get-ClientGuardText',
+                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport', 'Show-ClientGuardReport') {
         if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
             Write-Host ('MISSING RELIABILITY FUNCTION: ' + $fn); $fail++
         }
     }
+
+    # Сравнение снимков клиента: одинаковые = ok, изменённый файл = changed.
+    try {
+        $ga = [pscustomobject]@{ Items = @("RustClient.exe`t100`t111", "a.dll`t50`t222") }
+        $gb = [pscustomobject]@{ Items = @("RustClient.exe`t100`t111", "a.dll`t50`t222") }
+        $gc = [pscustomobject]@{ Items = @("RustClient.exe`t999`t111", "a.dll`t50`t222") }
+        if ((Compare-ClientGuardSnapshots $ga $gb).State -ne 'ok') { Write-Host 'CLIENT GUARD SAME SNAPSHOT FAILED'; $fail++ }
+        $gd = Compare-ClientGuardSnapshots $ga $gc
+        if ($gd.State -ne 'changed' -or @($gd.Changed).Count -ne 1) { Write-Host 'CLIENT GUARD CHANGE NOT DETECTED'; $fail++ }
+        if (@($gd.Changed)[0] -ne 'RustClient.exe') { Write-Host 'CLIENT GUARD CHANGE NAME WRONG'; $fail++ }
+        $realGuard = Get-ClientGuardSnapshot
+        if ($script:RustExe -and (-not $realGuard -or $realGuard.Count -lt 1)) { Write-Host 'CLIENT GUARD REAL SNAPSHOT EMPTY'; $fail++ }
+        if ($realGuard) {
+            $oldGuard = $script:State['ClientGuard']
+            try {
+                $null = Save-ClientGuardBaseline
+                $tg = Test-ClientGuard
+                if ($tg.State -ne 'ok') { Write-Host ('CLIENT GUARD ROUNDTRIP: ' + $tg.State); $fail++ }
+                if (-not (Get-ClientGuardText)) { Write-Host 'CLIENT GUARD TEXT EMPTY'; $fail++ }
+            } finally {
+                if ($null -eq $oldGuard) { $script:State.Remove('ClientGuard') } else { $script:State['ClientGuard'] = $oldGuard }
+            }
+        }
+    } catch { Write-Host ('CLIENT GUARD CHECK ERROR: ' + $_.Exception.Message); $fail++ }
 
     try {
         $plan = Get-PlanText

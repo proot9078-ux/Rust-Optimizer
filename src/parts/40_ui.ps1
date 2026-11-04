@@ -26,6 +26,27 @@ if ($script:SC -gt 2.5) { $script:SC = 2.5 }
 
 function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
+# Безопасная навигация из обработчиков кликов: панель перестраивается
+# после выхода из события, а не внутри него. Это исключает удаление контрола,
+# который ещё находится на стеке вызова, и убирает редкие подвисания.
+function Request-Group {
+    param([string]$gid, [switch]$Force)
+    if (-not $gid) { return }
+    if (-not $Force -and $gid -eq $script:ActiveGroup -and
+        $script:RowHost -and -not $script:RowHost.IsDisposed) {
+        try { $script:RowHost.ScrollToTop() } catch {}
+        return
+    }
+    try {
+        if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+            $invoke = [System.Windows.Forms.MethodInvoker]({ Show-Group $gid }.GetNewClosure())
+            $null = $script:MainForm.BeginInvoke($invoke)
+            return
+        }
+    } catch {}
+    Show-Group $gid
+}
+
 $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $minW = S 1000
 $minH = S 640
@@ -296,7 +317,7 @@ foreach ($grp in $script:Groups) {
     $b.Sub    = $grp.Sub
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
-    $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
+    $b.Add_Click({ param($s, $e) Request-Group $s.Tag })
     try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
@@ -819,7 +840,7 @@ function Show-Group {
             Save-State
         })
         $script:RowHost.Controls.Add($card)
-        $null = New-Object RustSuite.SlideTween -ArgumentList $card, ($top + (S 18)), $top, ($idx * 26), 260
+        $null = New-Object RustSuite.SlideTween -ArgumentList $card, ($top + (S 18)), $top, ([Math]::Min($idx, 8) * 22), 220
         $y += $rh + (S 8)
         $idx = $idx + 1
     }

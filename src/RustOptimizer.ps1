@@ -1,5 +1,5 @@
 ﻿# ============================================================
-#  PURPLE RUSH — RUST PERFORMANCE ENGINE  v5.1
+#  PURPLE RUSH - RUST PERFORMANCE ENGINE  v5.2
 #  Оптимизация Windows под RUST + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.1'
+$script:AppVersion   = '5.2'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -1940,11 +1940,9 @@ function Clear-GameJunkCore {
         foreach ($sub in @('logs', 'dumps', 'appcache\httpcache', 'appcache\librarycache')) {
             Clear-FolderSafe (Join-Path $script:SteamPath $sub) | Out-Null
         }
-        $rust = Join-Path $script:SteamPath 'steamapps\common\Rust'
-        foreach ($sub in @('logs', 'crash dumps')) {
-            Clear-FolderSafe (Join-Path $rust $sub) | Out-Null
-        }
-        Clear-FilesByPattern $rust '*.dmp' | Out-Null
+        # Внутри steamapps\common\Rust не удаляем ничего: единственные файлы,
+        # которые программа трогает в папке игры — официальные cfg (client.cfg,
+        # keys.cfg). Так исключён любой риск для целостности клиента и EAC.
     }
     $rustLocal = Join-Path $env:LOCALAPPDATA 'Facepunch\Rust'
     if (Test-Path -LiteralPath $rustLocal) {
@@ -1953,7 +1951,7 @@ function Clear-GameJunkCore {
         }
         Clear-FilesByPattern $rustLocal '*.dmp' | Out-Null
     }
-    Write-Log 'Логи и дампы Steam / RUST очищены (cfg и настройки не тронуты)' 'info'
+    Write-Log 'Логи и дампы Steam / RUST очищены (папка игры и cfg не тронуты)' 'info'
 }
 
 function Clear-ThumbnailCore {
@@ -3570,6 +3568,8 @@ function Start-Optimization {
     Set-Busy $true
     try {
         Write-Log ('Запуск оптимизации: модулей — ' + $list.Count) 'step'
+        # Эталон клиента до любых действий: после оптимизации сравним.
+        try { $null = Save-ClientGuardBaseline } catch {}
         New-RestorePoint
         Backup-RegKey 'HKCU:\Control Panel\Mouse' 'Mouse.reg'
 
@@ -3592,6 +3592,14 @@ function Start-Optimization {
         try { Invoke-RustProcessPolish } catch {}
         $script:State['Enabled'] = $script:Enabled
         Save-State
+        try {
+            $cg = Test-ClientGuard
+            if ($cg.State -eq 'ok') {
+                Write-Log 'Целостность клиента: RustClient.exe и DLL не изменены' 'ok'
+            } elseif ($cg.State -eq 'changed') {
+                Write-Log 'ВНИМАНИЕ: файлы клиента отличаются от эталона. Это не действие оптимизатора — проверьте обновление игры/Steam.' 'warn'
+            }
+        } catch {}
         Set-ProgressValue 100
         Set-Status 'Готово. Перезагрузите ПК для полного эффекта.' '#4ECB71'
         Write-Log 'Оптимизация завершена' 'ok'
@@ -3649,6 +3657,7 @@ function Invoke-RustOneClick {
     $dir = Get-RustCfgDir
     if (-not $dir) { return 'Не удалось открыть папку cfg игры.' }
 
+    try { $null = Save-ClientGuardBaseline } catch {}
     $wroteCfg = $false
     $wroteBinds = $false
     $errors = @()
@@ -3661,6 +3670,10 @@ function Invoke-RustOneClick {
         catch { $errors += ('keys.cfg: ' + $_.Exception.Message); Write-Log ('бинды: ' + $_.Exception.Message) 'warn' }
     }
     if ($wroteCfg -or $wroteBinds) { Add-Applied 'rustcfg'; Save-State }
+    try {
+        $cg = Test-ClientGuard
+        if ($cg.State -eq 'ok') { Write-Log 'Целостность клиента после cfg/биндов: файлы не изменены' 'ok' }
+    } catch {}
 
     $cfgCount = if ($wroteCfg) { @($cfgLines).Count } else { 0 }
     $bindCount = if ($wroteBinds) { @($bindLines).Count } else { 0 }
@@ -3903,6 +3916,12 @@ namespace RustSuite
             _t.Stop();
             try { AutoScrollPosition = new Point(0, _target); } catch { }
         }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _t != null) { try { _t.Stop(); _t.Dispose(); } catch { } }
+            base.Dispose(disposing);
+        }
     }
 
     // Заметная вертикальная полоса прокрутки со стрелками вверх/вниз.
@@ -3941,9 +3960,15 @@ namespace RustSuite
             _arrowH = 16;
             try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
             _t = new Timer();
-            _t.Interval = 40;
+            _t.Interval = 70;
             _t.Tick += delegate { Sync(); };
             _t.Start();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _t != null) { try { _t.Stop(); _t.Dispose(); } catch { } }
+            base.Dispose(disposing);
         }
 
         private ScrollableControl Sc { get { return _target as ScrollableControl; } }
@@ -4239,6 +4264,7 @@ namespace RustSuite
     public class HeaderPanel : Panel, IAnim
     {
         private float _phase = 0.15f;
+        private int _skip;
         public HeaderPanel()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
@@ -4248,8 +4274,13 @@ namespace RustSuite
         }
         public bool Tick()
         {
-            _phase += 0.0038f;
+            // Блик движется плавно, но перерисовывается ~20 раз в секунду,
+            // а не 66: шапка не греет CPU и не мешает плавности прокрутки.
+            _phase += 0.0114f;
             if (_phase > 1.35f) _phase = -0.25f;
+            _skip++;
+            if (_skip < 3) return true;
+            _skip = 0;
             Invalidate();
             return true;
         }
@@ -4765,6 +4796,7 @@ namespace RustSuite
     public class ProgressStrip : Control, IAnim
     {        private double _v, _shown;
         private float _phase;
+        private int _skip;
         public bool Shimmer = true;
 
         public double Value
@@ -4786,9 +4818,27 @@ namespace RustSuite
             _shown = _shown + (_v - _shown) * 0.18;
             bool moving = Math.Abs(_v - _shown) > 0.05;
             bool shim = Shimmer && _shown > 0.5 && _shown < 99.5;
-            if (shim) { _phase += 0.025f; if (_phase > 1f) _phase -= 1f; }
-            Invalidate();
-            return moving || shim;
+            if (moving)
+            {
+                _skip = 0;
+                if (shim) { _phase += 0.025f; if (_phase > 1f) _phase -= 1f; }
+                Invalidate();
+                return true;
+            }
+            // Блик на неподвижной полосе перерисовывается реже — экономия CPU.
+            if (shim)
+            {
+                _skip++;
+                if (_skip >= 3)
+                {
+                    _skip = 0;
+                    _phase += 0.075f;
+                    if (_phase > 1f) _phase -= 1f;
+                    Invalidate();
+                }
+                return true;
+            }
+            return false;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -4956,11 +5006,20 @@ namespace RustSuite
         private float _phase;
         private string _caption = "";
         private string _sub = "";
+        private int _idle;
+        private int _skip;
 
         public double Value
         {
             get { return _v; }
-            set { _v = Math.Max(0, Math.Min(100, value)); Anim.Add(this); }
+            set
+            {
+                double nv = Math.Max(0, Math.Min(100, value));
+                if (Math.Abs(nv - _v) < 0.001) return;
+                _v = nv;
+                _idle = 0;
+                Anim.Add(this);
+            }
         }
 
         public string Caption
@@ -4987,10 +5046,32 @@ namespace RustSuite
         public bool Tick()
         {
             _shown = _shown + (_v - _shown) * 0.12;
-            _phase += 0.012f;
-            if (_phase > 1f) _phase -= 1f;
-            Invalidate();
-            return Math.Abs(_v - _shown) > 0.05 || _shown > 0.5 || _v > 0.5;
+            bool settling = Math.Abs(_v - _shown) > 0.05;
+            if (settling)
+            {
+                _idle = 0;
+                _skip = 0;
+                _phase += 0.012f;
+                if (_phase > 1f) _phase -= 1f;
+                Invalidate();
+                return true;
+            }
+            // После остановки блик живёт ещё ~1.5 секунды и плавно замирает.
+            // Постоянный таймер не крутится вхолостую: интерфейс остаётся лёгким.
+            if (_idle < 90)
+            {
+                _idle++;
+                _skip++;
+                if (_skip >= 4)
+                {
+                    _skip = 0;
+                    _phase += 0.048f;
+                    if (_phase > 1f) _phase -= 1f;
+                    Invalidate();
+                }
+                return true;
+            }
+            return false;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -5069,6 +5150,7 @@ namespace RustSuite
         private readonly int _cap;
         private float _phase;
         private Color _line;
+        private int _pulse;
 
         public Sparkline() : this(60) { }
 
@@ -5093,6 +5175,7 @@ namespace RustSuite
             float v = (float)Math.Max(0, Math.Min(100, value));
             _pts.Add(v);
             while (_pts.Count > _cap) _pts.RemoveAt(0);
+            _pulse = 24;
             Anim.Add(this);
             Invalidate();
         }
@@ -5107,10 +5190,15 @@ namespace RustSuite
 
         public bool Tick()
         {
-            _phase += 0.02f;
+            if (_pts.Count < 2) return false;
+            // Пульс точки запускается только после нового замера (раз в 2.5 с),
+            // а не крутится 66 кадров/с всё время, пока открыт «ОБЗОР».
+            if (_pulse <= 0) return false;
+            _pulse--;
+            _phase += 0.05f;
             if (_phase > 1f) _phase -= 1f;
             Invalidate();
-            return _pts.Count > 1;
+            return _pulse > 0;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -5475,6 +5563,123 @@ function Get-BackupStats {
     return @{ Reg = $reg; Cfg = $cfg }
 }
 
+# ============================================================
+#  ЗАЩИТА КЛИЕНТА ИГРЫ
+#  Снимок размеров и времени изменения RustClient.exe и DLL.
+#  Программа никогда не пишет в эти файлы; снимок до/после
+#  оптимизации доказывает, что клиент остался нетронутым.
+# ============================================================
+function Get-ClientGuardSnapshot {
+    if (-not $script:RustExe) { return $null }
+    $root = Split-Path -Parent $script:RustExe
+    if (-not $root -or -not (Test-Path -LiteralPath $root)) { return $null }
+    $files = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    $addFile = {
+        param($file)
+        try {
+            if (-not $file -or -not (Test-Path -LiteralPath $file)) { return }
+            $fi = Get-Item -LiteralPath $file -Force -ErrorAction Stop
+            if ($fi.PSIsContainer) { return }
+            $rel = $fi.FullName.Substring($root.Length).TrimStart('\')
+            if ($seen.ContainsKey($rel)) { return }
+            $seen[$rel] = $true
+            $files.Add($rel + "`t" + [string]$fi.Length + "`t" + [string]$fi.LastWriteTimeUtc.Ticks)
+        } catch {}
+    }
+    & $addFile (Join-Path $root 'RustClient.exe')
+    & $addFile (Join-Path $root 'UnityPlayer.dll')
+    try {
+        foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.dll' -File -Force -ErrorAction SilentlyContinue)) { & $addFile $f.FullName }
+        foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.exe' -File -Force -ErrorAction SilentlyContinue)) { & $addFile $f.FullName }
+    } catch {}
+    foreach ($rel in @('RustClient_Data\Plugins\x86_64\EasyAntiCheat\EasyAntiCheat_x64.dll',
+                       'EasyAntiCheat\EasyAntiCheat_x64.dll',
+                       'EasyAntiCheat\EasyAntiCheat.exe')) {
+        & $addFile (Join-Path $root $rel)
+    }
+    $items = @($files | Sort-Object)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes(($items -join "`n"))
+        $hash = ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') }) -join ''
+    } finally { $sha.Dispose() }
+    return [pscustomobject]@{
+        Root  = $root
+        Count = $items.Count
+        Hash  = $hash
+        Items = $items
+        At    = (Get-Date).ToString('s')
+    }
+}
+
+function Save-ClientGuardBaseline {
+    $snap = Get-ClientGuardSnapshot
+    if (-not $snap) { return $null }
+    $script:State['ClientGuard'] = $snap
+    Save-State
+    return $snap
+}
+
+function Compare-ClientGuardSnapshots {
+    param($Before, $After)
+    $res = [pscustomobject]@{ State = 'none'; Missing = @(); Changed = @(); Added = @() }
+    if (-not $Before -or -not $After) { return $res }
+    $old = @{}
+    foreach ($l in @($Before.Items)) {
+        $p = ([string]$l).Split("`t")
+        if ($p.Count -ge 3) { $old[$p[0]] = ($p[1] + '|' + $p[2]) }
+    }
+    $new = @{}
+    foreach ($l in @($After.Items)) {
+        $p = ([string]$l).Split("`t")
+        if ($p.Count -ge 3) { $new[$p[0]] = ($p[1] + '|' + $p[2]) }
+    }
+    $missing = @(); $changed = @()
+    foreach ($k in @($old.Keys)) {
+        if (-not $new.ContainsKey($k)) { $missing += $k }
+        elseif ($new[$k] -ne $old[$k]) { $changed += $k }
+    }
+    $added = @()
+    foreach ($k in @($new.Keys)) { if (-not $old.ContainsKey($k)) { $added += $k } }
+    $res.Missing = @($missing)
+    $res.Changed = @($changed)
+    $res.Added   = @($added)
+    if ($missing.Count -eq 0 -and $changed.Count -eq 0 -and $added.Count -eq 0) { $res.State = 'ok' }
+    else { $res.State = 'changed' }
+    return $res
+}
+
+function Test-ClientGuard {
+    $base = $script:State['ClientGuard']
+    if (-not $base) { return [pscustomobject]@{ State = 'none'; Missing = @(); Changed = @(); Added = @() } }
+    return (Compare-ClientGuardSnapshots $base (Get-ClientGuardSnapshot))
+}
+
+function Get-ClientGuardText {
+    $base = $script:State['ClientGuard']
+    $cur  = Get-ClientGuardSnapshot
+    if (-not $cur) {
+        return 'Клиент игры: RUST не найден, проверка недоступна.'
+    }
+    if (-not $base) {
+        return ('Клиент игры: эталон ещё не снят. Файлов для контроля: ' + $cur.Count + '.')
+    }
+    $diff = Compare-ClientGuardSnapshots $base $cur
+    $lines = @()
+    if ($diff.State -eq 'ok') {
+        $lines += ('Клиент игры        : НЕ ИЗМЕНЁН · файлов ' + $cur.Count)
+    } else {
+        $lines += ('Клиент игры        : ЕСТЬ ОТЛИЧИЯ от эталона')
+        if ($diff.Missing.Count -gt 0) { $lines += ('  пропали          : ' + ($diff.Missing -join ', ')) }
+        if ($diff.Changed.Count -gt 0) { $lines += ('  изменились       : ' + ($diff.Changed -join ', ')) }
+        if ($diff.Added.Count -gt 0)   { $lines += ('  появились        : ' + ($diff.Added -join ', ')) }
+    }
+    $lines += ('Эталон снят         : ' + [string]$base.At)
+    $lines += ('SHA256 метаданных   : ' + [string]$cur.Hash)
+    return ($lines -join "`r`n")
+}
+
 function Get-TrustReportText {
     $fp = Get-SourceFingerprint
     $scan = Get-TrustScan
@@ -5496,6 +5701,9 @@ function Get-TrustReportText {
     [void]$sb.AppendLine(('Модулей            : ' + @($script:Tweaks).Count))
     [void]$sb.AppendLine(('Резервные копии    : реестр ' + $bk.Reg + ' · cfg ' + $bk.Cfg))
     [void]$sb.AppendLine(('Состояние          : ' + $(if (Test-Path -LiteralPath $script:StateFile) { 'state.xml на месте' } else { 'будет создан при первом сохранении' })))
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('ЦЕЛОСТНОСТЬ КЛИЕНТА ИГРЫ')
+    foreach ($line in ((Get-ClientGuardText) -split "`r?`n")) { [void]$sb.AppendLine('  ' + $line) }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('СТАТИЧЕСКИЙ АУДИТ ИСХОДНИКА')
     foreach ($it in $scan.Items) {
@@ -5611,10 +5819,10 @@ function Show-TextDialog {
     $btnClose.Width  = S 160
     $btnClose.Dock   = 'Right'
 
-    $btnCopy.Add_Click({
+    $btnCopy.Add_Click(({
         try { [System.Windows.Forms.Clipboard]::SetText($box.Text) } catch {}
-    })
-    $btnClose.Add_Click({ $dlg.Close() })
+    }).GetNewClosure())
+    $btnClose.Add_Click(({ try { $dlg.Close() } catch {} }).GetNewClosure())
 
     $bar.Controls.Add($btnClose)
     $bar.Controls.Add($btnCopy)
@@ -5622,7 +5830,7 @@ function Show-TextDialog {
     $dlg.Controls.Add($head)
     $dlg.Controls.Add($note)
     $dlg.Controls.Add($bar)
-    $dlg.Add_Shown({ try { [void][RustSuite.Native]::DarkTitle($dlg) } catch {} })
+    $dlg.Add_Shown({ param($s, $e) try { [void][RustSuite.Native]::DarkTitle($s) } catch {} })
 
     try {
         if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
@@ -5641,6 +5849,18 @@ function Show-PlanPreview {
 
 function Show-TrustReport {
     Show-TextDialog 'ОТЧЁТ О НАДЁЖНОСТИ' (Get-TrustReportText) 'Отчёт построен по локальному исходнику. Скопируйте его и сравните SHA256 с релизом на GitHub.'
+}
+
+function Show-ClientGuardReport {
+    $text = (Get-ClientGuardText) + "`r`n`r`n" +
+        "Что проверяется:`r`n" +
+        "  RustClient.exe, UnityPlayer.dll, все DLL и EXE в корне игры,`r`n" +
+        "  файлы EasyAntiCheat.`r`n`r`n" +
+        "Сравниваются размер и время изменения. Программа не открывает`r`n" +
+        "эти файлы на запись и не читает память игры, поэтому после`r`n" +
+        "оптимизации снимок обязан совпадать. Если файлы изменились —`r`n" +
+        "это сделала игра, Steam или другое приложение, а не PURPLE RUSH."
+    Show-TextDialog 'КЛИЕНТ RUST · ПРОВЕРКА ЦЕЛОСТНОСТИ' $text 'Эталон снимается при запуске программы и перед каждой оптимизацией.'
 }
 
 # ============================================================
@@ -5669,7 +5889,7 @@ function Set-ProfileFromHome {
     }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group 'home'
+    Request-Group 'home' -Force
     if ($IncludeRisk) {
         Set-Status 'Профиль «МАКСИМУМ»: включены все модули' '#E3B341'
         Write-Log 'Профиль «МАКСИМУМ»: включены все модули, включая рискованные' 'warn'
@@ -5694,7 +5914,7 @@ function Start-OptimizationFromHome {
     if ($ans -ne 'Yes') { return }
     try {
         $null = Start-Optimization
-        Show-Group 'home'
+        Request-Group 'home' -Force
         Update-Stats
         Write-Log ("Оптимизация из «ОБЗОРА» завершена: $cnt модулей") 'ok'
         [void][System.Windows.Forms.MessageBox]::Show(
@@ -5722,7 +5942,7 @@ function Start-RollbackFromHome {
     if ($ans -ne 'Yes') { return }
     try {
         Start-Rollback
-        Show-Group 'home'
+        Request-Group 'home' -Force
         Update-Stats
         [void][System.Windows.Forms.MessageBox]::Show('Откат выполнен.', 'PURPLE RUSH', 'OK', 'Information')
     } catch {
@@ -5955,8 +6175,8 @@ function Show-HomePanel {
         @{ Text = '⚡  МАКСИМУМ'; X = ($half + (S 8)); Y = 0; Style = 'Ghost'; Action = { Set-ProfileFromHome $true } },
         @{ Text = '▶  ОПТИМИЗИРОВАТЬ СЕЙЧАС'; X = 0; Y = ($bh + (S 8)); Style = 'Primary'; Action = { Start-OptimizationFromHome } },
         @{ Text = '↩  ОТКАТИТЬ ИЗМЕНЕНИЯ'; X = ($half + (S 8)); Y = ($bh + (S 8)); Style = 'Ghost'; Action = { Start-RollbackFromHome } },
-        @{ Text = '◈  ДИАГНОСТИКА WINDOWS'; X = 0; Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'repair' } },
-        @{ Text = '◐  ТЕМЫ И НАСТРОЙКИ'; X = ($half + (S 8)); Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Show-Group 'settings' } }
+        @{ Text = '◈  ДИАГНОСТИКА WINDOWS'; X = 0; Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Request-Group 'repair' } },
+        @{ Text = '◐  ТЕМЫ И НАСТРОЙКИ'; X = ($half + (S 8)); Y = (($bh + (S 8)) * 2); Style = 'Ghost'; Action = { Request-Group 'settings' } }
     )
     foreach ($bd in $buttons) {
         $b = New-Object RustSuite.FlatButton
@@ -6279,11 +6499,37 @@ if ($SelfTest) {
     foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',
                     'Get-AuditSourcePath', 'Get-SourceFingerprint', 'Get-TrustScan',
                     'Get-BackupStats', 'Get-TrustReportText', 'Get-PlanText',
-                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport') {
+                    'Get-ClientGuardSnapshot', 'Save-ClientGuardBaseline',
+                    'Compare-ClientGuardSnapshots', 'Test-ClientGuard', 'Get-ClientGuardText',
+                    'Show-TextDialog', 'Show-PlanPreview', 'Show-TrustReport', 'Show-ClientGuardReport') {
         if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
             Write-Host ('MISSING RELIABILITY FUNCTION: ' + $fn); $fail++
         }
     }
+
+    # Сравнение снимков клиента: одинаковые = ok, изменённый файл = changed.
+    try {
+        $ga = [pscustomobject]@{ Items = @("RustClient.exe`t100`t111", "a.dll`t50`t222") }
+        $gb = [pscustomobject]@{ Items = @("RustClient.exe`t100`t111", "a.dll`t50`t222") }
+        $gc = [pscustomobject]@{ Items = @("RustClient.exe`t999`t111", "a.dll`t50`t222") }
+        if ((Compare-ClientGuardSnapshots $ga $gb).State -ne 'ok') { Write-Host 'CLIENT GUARD SAME SNAPSHOT FAILED'; $fail++ }
+        $gd = Compare-ClientGuardSnapshots $ga $gc
+        if ($gd.State -ne 'changed' -or @($gd.Changed).Count -ne 1) { Write-Host 'CLIENT GUARD CHANGE NOT DETECTED'; $fail++ }
+        if (@($gd.Changed)[0] -ne 'RustClient.exe') { Write-Host 'CLIENT GUARD CHANGE NAME WRONG'; $fail++ }
+        $realGuard = Get-ClientGuardSnapshot
+        if ($script:RustExe -and (-not $realGuard -or $realGuard.Count -lt 1)) { Write-Host 'CLIENT GUARD REAL SNAPSHOT EMPTY'; $fail++ }
+        if ($realGuard) {
+            $oldGuard = $script:State['ClientGuard']
+            try {
+                $null = Save-ClientGuardBaseline
+                $tg = Test-ClientGuard
+                if ($tg.State -ne 'ok') { Write-Host ('CLIENT GUARD ROUNDTRIP: ' + $tg.State); $fail++ }
+                if (-not (Get-ClientGuardText)) { Write-Host 'CLIENT GUARD TEXT EMPTY'; $fail++ }
+            } finally {
+                if ($null -eq $oldGuard) { $script:State.Remove('ClientGuard') } else { $script:State['ClientGuard'] = $oldGuard }
+            }
+        }
+    } catch { Write-Host ('CLIENT GUARD CHECK ERROR: ' + $_.Exception.Message); $fail++ }
 
     try {
         $plan = Get-PlanText
@@ -6347,7 +6593,6 @@ if ($SelfTest) {
 #  ВАЖНО: этот файл загружается ДО 40_ui.ps1, поэтому функция
 #  Show-SettingsPanel уже существует к моменту первого Show-Group.
 # ============================================================
-function S([double]$v) { return [int][math]::Round($v * $script:SC) }
 
 # ---------- Палитры ----------
 $script:Themes = @(
@@ -6474,7 +6719,7 @@ function Restart-SettingsSoon {
             try { $script:ThemeTimer.Stop() } catch {}
             # Перестраиваем только если пользователь всё ещё на странице настроек.
             if ($script:ActiveGroup -eq 'settings') {
-                try { Show-Group 'settings' } catch {}
+                try { Request-Group 'settings' -Force } catch {}
             }
         })
         $script:ThemeTimer.Start()
@@ -6918,7 +7163,7 @@ function Show-SettingsPanel {
                 try {
                     $res = Import-OptimizerProfile -Path $dlg.FileName
                     Set-Status ('Профиль применён: ' + $res.Applied + ' модулей') '#4ECB71'
-                    Show-Group 'settings'
+                    Request-Group 'settings' -Force
                 } catch {
                     Set-Status ('Ошибка импорта: ' + $_.Exception.Message) '#FF6B62'
                 }
@@ -6926,6 +7171,33 @@ function Show-SettingsPanel {
         } finally { $dlg.Dispose() }
     })
     $script:RowHost.Controls.Add($btnImport)
+    $y += S 44
+
+    $btnGuard = New-Object RustSuite.FlatButton
+    $btnGuard.Style  = 'Ghost'
+    $btnGuard.Text   = 'СВЕРИТЬ КЛИЕНТ RUST'
+    $btnGuard.Font   = [RustSuite.Theme]::FSmall
+    $btnGuard.Bounds = New-Object System.Drawing.Rectangle 0, $y, $halfW, (S 34)
+    $btnGuard.Add_Click({ Show-ClientGuardReport })
+    $script:RowHost.Controls.Add($btnGuard)
+
+    $btnGuardBase = New-Object RustSuite.FlatButton
+    $btnGuardBase.Style  = 'Ghost'
+    $btnGuardBase.Text   = 'ОБНОВИТЬ ЭТАЛОН'
+    $btnGuardBase.Font   = [RustSuite.Theme]::FSmall
+    $btnGuardBase.Bounds = New-Object System.Drawing.Rectangle ($halfW + (S 8)), $y, $halfW, (S 34)
+    $btnGuardBase.Add_Click({
+        try {
+            $snap = Save-ClientGuardBaseline
+            if ($snap) {
+                Set-Status ('Эталон клиента обновлён: ' + $snap.Count + ' файлов') '#4ECB71'
+                Write-Log ('Эталон клиента RUST обновлён: ' + $snap.Count + ' файлов') 'ok'
+            } else {
+                Set-Status 'RUST не найден — эталон не снят' '#FF6B62'
+            }
+        } catch { Set-Status ('Ошибка эталона: ' + $_.Exception.Message) '#FF6B62' }
+    })
+    $script:RowHost.Controls.Add($btnGuardBase)
     $y += S 44
 
     $btnTrust = New-Object RustSuite.FlatButton
@@ -7108,6 +7380,27 @@ if ($script:SC -gt 2.5) { $script:SC = 2.5 }
 [RustSuite.Theme]::ScaleFonts($script:SC)
 
 function S([double]$v) { return [int][math]::Round($v * $script:SC) }
+
+# Безопасная навигация из обработчиков кликов: панель перестраивается
+# после выхода из события, а не внутри него. Это исключает удаление контрола,
+# который ещё находится на стеке вызова, и убирает редкие подвисания.
+function Request-Group {
+    param([string]$gid, [switch]$Force)
+    if (-not $gid) { return }
+    if (-not $Force -and $gid -eq $script:ActiveGroup -and
+        $script:RowHost -and -not $script:RowHost.IsDisposed) {
+        try { $script:RowHost.ScrollToTop() } catch {}
+        return
+    }
+    try {
+        if ($script:MainForm -and -not $script:MainForm.IsDisposed) {
+            $invoke = [System.Windows.Forms.MethodInvoker]({ Show-Group $gid }.GetNewClosure())
+            $null = $script:MainForm.BeginInvoke($invoke)
+            return
+        }
+    } catch {}
+    Show-Group $gid
+}
 
 $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $minW = S 1000
@@ -7379,7 +7672,7 @@ foreach ($grp in $script:Groups) {
     $b.Sub    = $grp.Sub
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
-    $b.Add_Click({ param($s, $e) Show-Group $s.Tag })
+    $b.Add_Click({ param($s, $e) Request-Group $s.Tag })
     try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
@@ -7902,7 +8195,7 @@ function Show-Group {
             Save-State
         })
         $script:RowHost.Controls.Add($card)
-        $null = New-Object RustSuite.SlideTween -ArgumentList $card, ($top + (S 18)), $top, ($idx * 26), 260
+        $null = New-Object RustSuite.SlideTween -ArgumentList $card, ($top + (S 18)), $top, ([Math]::Min($idx, 8) * 22), 220
         $y += $rh + (S 8)
         $idx = $idx + 1
     }
@@ -8033,7 +8326,7 @@ function Start-HealthScan {
     }
     # Show-Group очищает старые контролы, поэтому после сканирования
     # страница перестраивается без наложения двух наборов строк.
-    if ($script:ActiveGroup -eq 'repair') { Show-Group 'repair' }
+    if ($script:ActiveGroup -eq 'repair') { Request-Group 'repair' -Force }
 }
 
 function Restart-PcFromUi {
@@ -8061,7 +8354,7 @@ function Invoke-HealthFixFromUi {
     if (-not $Check -or $script:Busy) { return }
 
     if ($Check.Fix -eq 'cleanup') {
-        Show-Group 'clean'
+        Request-Group 'clean'
         Set-Status ('Рекомендация: ' + $Check.Title + ' — запустите глубокую очистку') '#E3B341'
         Write-Log ('Диагностика рекомендует очистку: ' + $Check.Title) 'info'
         return
@@ -9056,57 +9349,8 @@ function Copy-BindsFromUi {
     }
 }
 
-function Show-TextDialog {
-    param([string]$Title, [string]$Body)
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = $Title
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.FormBorderStyle = 'Sizable'
-    $dlg.MinimizeBox     = $false
-    $dlg.BackColor       = [RustSuite.Theme]::Bg
-    $dlg.ForeColor       = [RustSuite.Theme]::TextC
-    $dlg.Font            = [RustSuite.Theme]::FSub
-    $dlg.Size            = New-Object System.Drawing.Size (S 640), (S 460)
-    $dlg.MinimumSize     = New-Object System.Drawing.Size (S 480), (S 340)
-
-    $tb = New-Object System.Windows.Forms.TextBox
-    $tb.Multiline   = $true
-    $tb.ReadOnly    = $true
-    $tb.ScrollBars  = 'Both'
-    $tb.WordWrap    = $false
-    $tb.BorderStyle = 'None'
-    $tb.BackColor   = [RustSuite.Theme]::Field
-    $tb.ForeColor   = [RustSuite.Theme]::TextC
-    $tb.Font        = [RustSuite.Theme]::FMono
-    $tb.Dock        = 'Fill'
-    $tb.Text        = $Body
-
-    $bar = New-Object System.Windows.Forms.Panel
-    $bar.Dock      = 'Bottom'
-    $bar.Height    = S 58
-    $bar.BackColor = [RustSuite.Theme]::PanelBg
-
-    $btnCopy = New-Object RustSuite.FlatButton
-    $btnCopy.Style  = 'Primary'
-    $btnCopy.Text   = 'КОПИРОВАТЬ'
-    $btnCopy.Bounds = New-Object System.Drawing.Rectangle (S 16), (S 12), (S 170), (S 36)
-    $btnCopy.Tag    = $tb
-    $btnCopy.Add_Click({
-        param($s, $e)
-        if ($s.Tag -and (Copy-Text $s.Tag.Text)) { Write-Log 'Текст скопирован в буфер обмена' 'ok' }
-    })
-
-    $btnClose = New-Object RustSuite.FlatButton
-    $btnClose.Style  = 'Ghost'
-    $btnClose.Text   = 'ЗАКРЫТЬ'
-    $btnClose.Bounds = New-Object System.Drawing.Rectangle (S 196), (S 12), (S 130), (S 36)
-    $btnClose.Add_Click({ param($s, $e) $f = $s.FindForm(); if ($f) { $f.Close() } })
-
-    $bar.Controls.AddRange(@($btnCopy, $btnClose))
-    $dlg.Controls.Add($tb)
-    $dlg.Controls.Add($bar)
-    [void]$dlg.ShowDialog($form)
-}
+# Показ длинного текста выполняет Show-TextDialog из 33_trust.ps1:
+# один диалог на всё приложение, с кнопкой копирования и заметкой.
 
 function Show-ConsoleCommands {
     $all = @()
@@ -9132,7 +9376,7 @@ function Rust-OneClickFromUi {
         'PURPLE RUSH', 'YesNo', 'Question')
     if ($a -ne 'Yes') { return }
     $res = [string](Invoke-RustOneClick)
-    if ($script:ActiveGroup -eq 'rust') { Show-Group 'rust' }
+    if ($script:ActiveGroup -eq 'rust') { Request-Group 'rust' -Force }
     [void][System.Windows.Forms.MessageBox]::Show($res, 'PURPLE RUSH', 'OK', 'Information')
 }
 
@@ -9333,7 +9577,7 @@ $btnSafe.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = (-not $t.Risk) }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group $script:ActiveGroup
+    Request-Group $script:ActiveGroup -Force
     Write-Log 'Профиль «Безопасный»: только проверенные модули' 'info'
 })
 
@@ -9341,7 +9585,7 @@ $btnMax.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = $true }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group $script:ActiveGroup
+    Request-Group $script:ActiveGroup -Force
     Write-Log 'Профиль «Максимум»: включены все модули, включая рискованные' 'warn'
 })
 
@@ -9465,7 +9709,7 @@ $form.Add_KeyDown({
         if ($key -ge $first -and $key -le $last) {
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
-                Show-Group $script:Groups[$idx].Id
+                Request-Group $script:Groups[$idx].Id
                 $e.Handled = $true
                 $e.SuppressKeyPress = $true
                 return
@@ -9544,6 +9788,13 @@ $form.Add_Shown({
     Write-Log 'Бинды и cfg — официальные файлы игры; exe/dll не изменяются.' 'info'
     Write-Log 'Выберите модули и нажмите «ОПТИМИЗИРОВАТЬ ПК».' 'info'
 
+    if (-not $script:TestUi) {
+        try {
+            $snap = Save-ClientGuardBaseline
+            if ($snap) { Write-Log ('Эталон клиента RUST снят: ' + $snap.Count + ' файлов, exe/dll не трогаем') 'info' }
+        } catch {}
+    }
+
     $script:StatsTimer = New-Object System.Windows.Forms.Timer
     $script:StatsTimer.Interval = 2500
     $script:StatsTimer.Add_Tick({ Update-Stats })
@@ -9558,8 +9809,11 @@ $form.Add_Shown({
             if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
-                    0 { Show-Group 'sys' }
-                    1 { Show-Group 'net' }
+                    0 { Request-Group 'sys' }
+                    1 {
+                        if ($script:ActiveGroup -ne 'sys') { throw 'DEFERRED NAVIGATION FAILED' }
+                        Show-Group 'net'
+                    }
                     2 { Show-Group 'rust' }
                     3 { Show-Group 'binds' }
                     4 { Show-Group 'clean' }

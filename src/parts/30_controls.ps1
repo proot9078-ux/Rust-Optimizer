@@ -208,6 +208,12 @@ namespace RustSuite
             _t.Stop();
             try { AutoScrollPosition = new Point(0, _target); } catch { }
         }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _t != null) { try { _t.Stop(); _t.Dispose(); } catch { } }
+            base.Dispose(disposing);
+        }
     }
 
     // Заметная вертикальная полоса прокрутки со стрелками вверх/вниз.
@@ -246,9 +252,15 @@ namespace RustSuite
             _arrowH = 16;
             try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
             _t = new Timer();
-            _t.Interval = 40;
+            _t.Interval = 70;
             _t.Tick += delegate { Sync(); };
             _t.Start();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _t != null) { try { _t.Stop(); _t.Dispose(); } catch { } }
+            base.Dispose(disposing);
         }
 
         private ScrollableControl Sc { get { return _target as ScrollableControl; } }
@@ -544,6 +556,7 @@ namespace RustSuite
     public class HeaderPanel : Panel, IAnim
     {
         private float _phase = 0.15f;
+        private int _skip;
         public HeaderPanel()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
@@ -553,8 +566,13 @@ namespace RustSuite
         }
         public bool Tick()
         {
-            _phase += 0.0038f;
+            // Блик движется плавно, но перерисовывается ~20 раз в секунду,
+            // а не 66: шапка не греет CPU и не мешает плавности прокрутки.
+            _phase += 0.0114f;
             if (_phase > 1.35f) _phase = -0.25f;
+            _skip++;
+            if (_skip < 3) return true;
+            _skip = 0;
             Invalidate();
             return true;
         }
@@ -1070,6 +1088,7 @@ namespace RustSuite
     public class ProgressStrip : Control, IAnim
     {        private double _v, _shown;
         private float _phase;
+        private int _skip;
         public bool Shimmer = true;
 
         public double Value
@@ -1091,9 +1110,27 @@ namespace RustSuite
             _shown = _shown + (_v - _shown) * 0.18;
             bool moving = Math.Abs(_v - _shown) > 0.05;
             bool shim = Shimmer && _shown > 0.5 && _shown < 99.5;
-            if (shim) { _phase += 0.025f; if (_phase > 1f) _phase -= 1f; }
-            Invalidate();
-            return moving || shim;
+            if (moving)
+            {
+                _skip = 0;
+                if (shim) { _phase += 0.025f; if (_phase > 1f) _phase -= 1f; }
+                Invalidate();
+                return true;
+            }
+            // Блик на неподвижной полосе перерисовывается реже — экономия CPU.
+            if (shim)
+            {
+                _skip++;
+                if (_skip >= 3)
+                {
+                    _skip = 0;
+                    _phase += 0.075f;
+                    if (_phase > 1f) _phase -= 1f;
+                    Invalidate();
+                }
+                return true;
+            }
+            return false;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -1261,11 +1298,20 @@ namespace RustSuite
         private float _phase;
         private string _caption = "";
         private string _sub = "";
+        private int _idle;
+        private int _skip;
 
         public double Value
         {
             get { return _v; }
-            set { _v = Math.Max(0, Math.Min(100, value)); Anim.Add(this); }
+            set
+            {
+                double nv = Math.Max(0, Math.Min(100, value));
+                if (Math.Abs(nv - _v) < 0.001) return;
+                _v = nv;
+                _idle = 0;
+                Anim.Add(this);
+            }
         }
 
         public string Caption
@@ -1292,10 +1338,32 @@ namespace RustSuite
         public bool Tick()
         {
             _shown = _shown + (_v - _shown) * 0.12;
-            _phase += 0.012f;
-            if (_phase > 1f) _phase -= 1f;
-            Invalidate();
-            return Math.Abs(_v - _shown) > 0.05 || _shown > 0.5 || _v > 0.5;
+            bool settling = Math.Abs(_v - _shown) > 0.05;
+            if (settling)
+            {
+                _idle = 0;
+                _skip = 0;
+                _phase += 0.012f;
+                if (_phase > 1f) _phase -= 1f;
+                Invalidate();
+                return true;
+            }
+            // После остановки блик живёт ещё ~1.5 секунды и плавно замирает.
+            // Постоянный таймер не крутится вхолостую: интерфейс остаётся лёгким.
+            if (_idle < 90)
+            {
+                _idle++;
+                _skip++;
+                if (_skip >= 4)
+                {
+                    _skip = 0;
+                    _phase += 0.048f;
+                    if (_phase > 1f) _phase -= 1f;
+                    Invalidate();
+                }
+                return true;
+            }
+            return false;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -1374,6 +1442,7 @@ namespace RustSuite
         private readonly int _cap;
         private float _phase;
         private Color _line;
+        private int _pulse;
 
         public Sparkline() : this(60) { }
 
@@ -1398,6 +1467,7 @@ namespace RustSuite
             float v = (float)Math.Max(0, Math.Min(100, value));
             _pts.Add(v);
             while (_pts.Count > _cap) _pts.RemoveAt(0);
+            _pulse = 24;
             Anim.Add(this);
             Invalidate();
         }
@@ -1412,10 +1482,15 @@ namespace RustSuite
 
         public bool Tick()
         {
-            _phase += 0.02f;
+            if (_pts.Count < 2) return false;
+            // Пульс точки запускается только после нового замера (раз в 2.5 с),
+            // а не крутится 66 кадров/с всё время, пока открыт «ОБЗОР».
+            if (_pulse <= 0) return false;
+            _pulse--;
+            _phase += 0.05f;
             if (_phase > 1f) _phase -= 1f;
             Invalidate();
-            return _pts.Count > 1;
+            return _pulse > 0;
         }
 
         protected override void OnPaint(PaintEventArgs e)

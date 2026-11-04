@@ -203,11 +203,9 @@ function Clear-GameJunkCore {
         foreach ($sub in @('logs', 'dumps', 'appcache\httpcache', 'appcache\librarycache')) {
             Clear-FolderSafe (Join-Path $script:SteamPath $sub) | Out-Null
         }
-        $rust = Join-Path $script:SteamPath 'steamapps\common\Rust'
-        foreach ($sub in @('logs', 'crash dumps')) {
-            Clear-FolderSafe (Join-Path $rust $sub) | Out-Null
-        }
-        Clear-FilesByPattern $rust '*.dmp' | Out-Null
+        # Внутри steamapps\common\Rust не удаляем ничего: единственные файлы,
+        # которые программа трогает в папке игры — официальные cfg (client.cfg,
+        # keys.cfg). Так исключён любой риск для целостности клиента и EAC.
     }
     $rustLocal = Join-Path $env:LOCALAPPDATA 'Facepunch\Rust'
     if (Test-Path -LiteralPath $rustLocal) {
@@ -216,7 +214,7 @@ function Clear-GameJunkCore {
         }
         Clear-FilesByPattern $rustLocal '*.dmp' | Out-Null
     }
-    Write-Log 'Логи и дампы Steam / RUST очищены (cfg и настройки не тронуты)' 'info'
+    Write-Log 'Логи и дампы Steam / RUST очищены (папка игры и cfg не тронуты)' 'info'
 }
 
 function Clear-ThumbnailCore {

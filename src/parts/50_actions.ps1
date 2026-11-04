@@ -66,57 +66,8 @@ function Copy-BindsFromUi {
     }
 }
 
-function Show-TextDialog {
-    param([string]$Title, [string]$Body)
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = $Title
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.FormBorderStyle = 'Sizable'
-    $dlg.MinimizeBox     = $false
-    $dlg.BackColor       = [RustSuite.Theme]::Bg
-    $dlg.ForeColor       = [RustSuite.Theme]::TextC
-    $dlg.Font            = [RustSuite.Theme]::FSub
-    $dlg.Size            = New-Object System.Drawing.Size (S 640), (S 460)
-    $dlg.MinimumSize     = New-Object System.Drawing.Size (S 480), (S 340)
-
-    $tb = New-Object System.Windows.Forms.TextBox
-    $tb.Multiline   = $true
-    $tb.ReadOnly    = $true
-    $tb.ScrollBars  = 'Both'
-    $tb.WordWrap    = $false
-    $tb.BorderStyle = 'None'
-    $tb.BackColor   = [RustSuite.Theme]::Field
-    $tb.ForeColor   = [RustSuite.Theme]::TextC
-    $tb.Font        = [RustSuite.Theme]::FMono
-    $tb.Dock        = 'Fill'
-    $tb.Text        = $Body
-
-    $bar = New-Object System.Windows.Forms.Panel
-    $bar.Dock      = 'Bottom'
-    $bar.Height    = S 58
-    $bar.BackColor = [RustSuite.Theme]::PanelBg
-
-    $btnCopy = New-Object RustSuite.FlatButton
-    $btnCopy.Style  = 'Primary'
-    $btnCopy.Text   = 'КОПИРОВАТЬ'
-    $btnCopy.Bounds = New-Object System.Drawing.Rectangle (S 16), (S 12), (S 170), (S 36)
-    $btnCopy.Tag    = $tb
-    $btnCopy.Add_Click({
-        param($s, $e)
-        if ($s.Tag -and (Copy-Text $s.Tag.Text)) { Write-Log 'Текст скопирован в буфер обмена' 'ok' }
-    })
-
-    $btnClose = New-Object RustSuite.FlatButton
-    $btnClose.Style  = 'Ghost'
-    $btnClose.Text   = 'ЗАКРЫТЬ'
-    $btnClose.Bounds = New-Object System.Drawing.Rectangle (S 196), (S 12), (S 130), (S 36)
-    $btnClose.Add_Click({ param($s, $e) $f = $s.FindForm(); if ($f) { $f.Close() } })
-
-    $bar.Controls.AddRange(@($btnCopy, $btnClose))
-    $dlg.Controls.Add($tb)
-    $dlg.Controls.Add($bar)
-    [void]$dlg.ShowDialog($form)
-}
+# Показ длинного текста выполняет Show-TextDialog из 33_trust.ps1:
+# один диалог на всё приложение, с кнопкой копирования и заметкой.
 
 function Show-ConsoleCommands {
     $all = @()
@@ -142,7 +93,7 @@ function Rust-OneClickFromUi {
         'PURPLE RUSH', 'YesNo', 'Question')
     if ($a -ne 'Yes') { return }
     $res = [string](Invoke-RustOneClick)
-    if ($script:ActiveGroup -eq 'rust') { Show-Group 'rust' }
+    if ($script:ActiveGroup -eq 'rust') { Request-Group 'rust' -Force }
     [void][System.Windows.Forms.MessageBox]::Show($res, 'PURPLE RUSH', 'OK', 'Information')
 }
 
@@ -343,7 +294,7 @@ $btnSafe.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = (-not $t.Risk) }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group $script:ActiveGroup
+    Request-Group $script:ActiveGroup -Force
     Write-Log 'Профиль «Безопасный»: только проверенные модули' 'info'
 })
 
@@ -351,7 +302,7 @@ $btnMax.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = $true }
     $script:State['Enabled'] = $script:Enabled
     Save-State
-    Show-Group $script:ActiveGroup
+    Request-Group $script:ActiveGroup -Force
     Write-Log 'Профиль «Максимум»: включены все модули, включая рискованные' 'warn'
 })
 
@@ -475,7 +426,7 @@ $form.Add_KeyDown({
         if ($key -ge $first -and $key -le $last) {
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
-                Show-Group $script:Groups[$idx].Id
+                Request-Group $script:Groups[$idx].Id
                 $e.Handled = $true
                 $e.SuppressKeyPress = $true
                 return
@@ -554,6 +505,13 @@ $form.Add_Shown({
     Write-Log 'Бинды и cfg — официальные файлы игры; exe/dll не изменяются.' 'info'
     Write-Log 'Выберите модули и нажмите «ОПТИМИЗИРОВАТЬ ПК».' 'info'
 
+    if (-not $script:TestUi) {
+        try {
+            $snap = Save-ClientGuardBaseline
+            if ($snap) { Write-Log ('Эталон клиента RUST снят: ' + $snap.Count + ' файлов, exe/dll не трогаем') 'info' }
+        } catch {}
+    }
+
     $script:StatsTimer = New-Object System.Windows.Forms.Timer
     $script:StatsTimer.Interval = 2500
     $script:StatsTimer.Add_Tick({ Update-Stats })
@@ -568,8 +526,11 @@ $form.Add_Shown({
             if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
-                    0 { Show-Group 'sys' }
-                    1 { Show-Group 'net' }
+                    0 { Request-Group 'sys' }
+                    1 {
+                        if ($script:ActiveGroup -ne 'sys') { throw 'DEFERRED NAVIGATION FAILED' }
+                        Show-Group 'net'
+                    }
                     2 { Show-Group 'rust' }
                     3 { Show-Group 'binds' }
                     4 { Show-Group 'clean' }

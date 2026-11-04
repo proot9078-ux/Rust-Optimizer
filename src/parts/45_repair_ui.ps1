@@ -64,7 +64,7 @@ function Start-HealthScan {
     }
     # Show-Group очищает старые контролы, поэтому после сканирования
     # страница перестраивается без наложения двух наборов строк.
-    if ($script:ActiveGroup -eq 'repair') { Show-Group 'repair' }
+    if ($script:ActiveGroup -eq 'repair') { Request-Group 'repair' -Force }
 }
 
 function Restart-PcFromUi {
@@ -92,7 +92,7 @@ function Invoke-HealthFixFromUi {
     if (-not $Check -or $script:Busy) { return }
 
     if ($Check.Fix -eq 'cleanup') {
-        Show-Group 'clean'
+        Request-Group 'clean'
         Set-Status ('Рекомендация: ' + $Check.Title + ' — запустите глубокую очистку') '#E3B341'
         Write-Log ('Диагностика рекомендует очистку: ' + $Check.Title) 'info'
         return
