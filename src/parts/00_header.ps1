@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.3'
+$script:AppVersion   = '6.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -21,6 +21,7 @@ $script:Enabled      = @{}
 $script:RustExe      = $null
 $script:SteamPath    = $null
 $script:RustCfgDir   = $null
+$script:RustInfo     = $null
 $script:ActiveGroup  = 'home'
 $script:SC           = 1.0
 $script:Busy         = $false
@@ -322,6 +323,109 @@ function Get-RustCfgDir {
 function Test-RustRunning {
     $p = Get-Process -Name 'RustClient' -ErrorAction SilentlyContinue
     return [bool]$p
+}
+
+# ============================================================
+#  RUST: версия клиента и совместимость cfg
+#  Rust 2026 работает на Unity 6.x; набор конваров меняется,
+#  поэтому cfg применяется только к ключам, которые игра
+#  реально использует в своём client.cfg.
+# ============================================================
+function Get-RustClientInfo {
+    $info = [pscustomobject]@{
+        Found    = $false
+        Exe      = ''
+        Version  = ''
+        Unity    = ''
+        Build    = ''
+        Updated  = ''
+        SizeMb   = 0
+        Eac      = $false
+        CfgPath  = ''
+        CfgKeys  = 0
+        CfgReady = $false
+    }
+    if (-not $script:RustExe -or -not (Test-Path -LiteralPath $script:RustExe)) { return $info }
+    $info.Found = $true
+    $info.Exe   = [string]$script:RustExe
+    try {
+        $fi = Get-Item -LiteralPath $script:RustExe -Force
+        $info.SizeMb  = [math]::Round($fi.Length / 1MB, 1)
+        $info.Updated = $fi.LastWriteTime.ToString('yyyy-MM-dd')
+        $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($fi.FullName)
+        $info.Version = [string]$vi.FileVersion
+        $parts = $info.Version.Split('.')
+        if ($parts.Count -ge 3) { $info.Unity = ($parts[0..2] -join '.') }
+        if ($parts.Count -ge 4) { $info.Build = [string]$parts[3] }
+    } catch {}
+    $root = Split-Path -Parent $info.Exe
+    foreach ($rel in @('EasyAntiCheat\EasyAntiCheat_x64.dll',
+                       'EasyAntiCheat\EasyAntiCheat_EOS_Setup.exe',
+                       'RustClient_Data\Plugins\x86_64\EasyAntiCheat\EasyAntiCheat_x64.dll')) {
+        try { if (Test-Path -LiteralPath (Join-Path $root $rel)) { $info.Eac = $true; break } } catch {}
+    }
+    try {
+        $cfgDir = Join-Path $root 'cfg'
+        $info.CfgPath = Join-Path $cfgDir 'client.cfg'
+        if (Test-Path -LiteralPath $info.CfgPath) {
+            $info.CfgKeys  = (Get-RustCfgKnownKeys $info.CfgPath).Count
+            $info.CfgReady = ($info.CfgKeys -ge 50)
+        }
+    } catch {}
+    return $info
+}
+
+function Get-RustCfgKnownKeys {
+    param([string]$Path)
+    $keys = @{}
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $keys }
+    try {
+        foreach ($ln in [IO.File]::ReadAllLines($Path)) {
+            if ($ln -match '^\s*([A-Za-z0-9_.]+)\s') { $keys[$matches[1].ToLower()] = $true }
+        }
+    } catch {}
+    return $keys
+}
+
+# Оставляет только те строки, которые эта версия Rust уже использует.
+# Если cfg ещё не создан игрой — применяется полный проверенный список.
+function Select-RustCfgLines {
+    param([string[]]$Lines, [string]$Path)
+    $res = [pscustomobject]@{ Lines = @($Lines); Skipped = @() }
+    $known = Get-RustCfgKnownKeys $Path
+    if ($known.Count -lt 50) { return $res }
+    $keep = @()
+    $skip = @()
+    foreach ($l in @($Lines)) {
+        if (-not $l) { continue }
+        if ($l -match '^\s*([A-Za-z0-9_.]+)') {
+            $k = $matches[1].ToLower()
+            if ($k -eq 'fps.graph' -or $known.ContainsKey($k)) { $keep += [string]$l }
+            else { $skip += $k }
+        } else { $keep += [string]$l }
+    }
+    $res.Lines   = @($keep)
+    $res.Skipped = @($skip | Select-Object -Unique)
+    return $res
+}
+
+function Get-RustCfgAudit {
+    param([string[]]$Keys)
+    $dir  = Get-RustCfgDir
+    $path = if ($dir) { Join-Path $dir 'client.cfg' } else { '' }
+    $known = Get-RustCfgKnownKeys $path
+    $ok = @(); $missing = @()
+    foreach ($k in @($Keys)) {
+        if (-not $k) { continue }
+        if ($known.ContainsKey(([string]$k).ToLower())) { $ok += [string]$k } else { $missing += [string]$k }
+    }
+    return [pscustomobject]@{
+        Ready   = ($known.Count -ge 50)
+        Total   = $known.Count
+        Ok      = @($ok)
+        Missing = @($missing)
+        Path    = $path
+    }
 }
 
 function Get-PhysicalCoreMask {

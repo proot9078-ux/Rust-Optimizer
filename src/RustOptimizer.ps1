@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '5.3'
+$script:AppVersion   = '6.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -21,6 +21,7 @@ $script:Enabled      = @{}
 $script:RustExe      = $null
 $script:SteamPath    = $null
 $script:RustCfgDir   = $null
+$script:RustInfo     = $null
 $script:ActiveGroup  = 'home'
 $script:SC           = 1.0
 $script:Busy         = $false
@@ -322,6 +323,109 @@ function Get-RustCfgDir {
 function Test-RustRunning {
     $p = Get-Process -Name 'RustClient' -ErrorAction SilentlyContinue
     return [bool]$p
+}
+
+# ============================================================
+#  RUST: версия клиента и совместимость cfg
+#  Rust 2026 работает на Unity 6.x; набор конваров меняется,
+#  поэтому cfg применяется только к ключам, которые игра
+#  реально использует в своём client.cfg.
+# ============================================================
+function Get-RustClientInfo {
+    $info = [pscustomobject]@{
+        Found    = $false
+        Exe      = ''
+        Version  = ''
+        Unity    = ''
+        Build    = ''
+        Updated  = ''
+        SizeMb   = 0
+        Eac      = $false
+        CfgPath  = ''
+        CfgKeys  = 0
+        CfgReady = $false
+    }
+    if (-not $script:RustExe -or -not (Test-Path -LiteralPath $script:RustExe)) { return $info }
+    $info.Found = $true
+    $info.Exe   = [string]$script:RustExe
+    try {
+        $fi = Get-Item -LiteralPath $script:RustExe -Force
+        $info.SizeMb  = [math]::Round($fi.Length / 1MB, 1)
+        $info.Updated = $fi.LastWriteTime.ToString('yyyy-MM-dd')
+        $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($fi.FullName)
+        $info.Version = [string]$vi.FileVersion
+        $parts = $info.Version.Split('.')
+        if ($parts.Count -ge 3) { $info.Unity = ($parts[0..2] -join '.') }
+        if ($parts.Count -ge 4) { $info.Build = [string]$parts[3] }
+    } catch {}
+    $root = Split-Path -Parent $info.Exe
+    foreach ($rel in @('EasyAntiCheat\EasyAntiCheat_x64.dll',
+                       'EasyAntiCheat\EasyAntiCheat_EOS_Setup.exe',
+                       'RustClient_Data\Plugins\x86_64\EasyAntiCheat\EasyAntiCheat_x64.dll')) {
+        try { if (Test-Path -LiteralPath (Join-Path $root $rel)) { $info.Eac = $true; break } } catch {}
+    }
+    try {
+        $cfgDir = Join-Path $root 'cfg'
+        $info.CfgPath = Join-Path $cfgDir 'client.cfg'
+        if (Test-Path -LiteralPath $info.CfgPath) {
+            $info.CfgKeys  = (Get-RustCfgKnownKeys $info.CfgPath).Count
+            $info.CfgReady = ($info.CfgKeys -ge 50)
+        }
+    } catch {}
+    return $info
+}
+
+function Get-RustCfgKnownKeys {
+    param([string]$Path)
+    $keys = @{}
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $keys }
+    try {
+        foreach ($ln in [IO.File]::ReadAllLines($Path)) {
+            if ($ln -match '^\s*([A-Za-z0-9_.]+)\s') { $keys[$matches[1].ToLower()] = $true }
+        }
+    } catch {}
+    return $keys
+}
+
+# Оставляет только те строки, которые эта версия Rust уже использует.
+# Если cfg ещё не создан игрой — применяется полный проверенный список.
+function Select-RustCfgLines {
+    param([string[]]$Lines, [string]$Path)
+    $res = [pscustomobject]@{ Lines = @($Lines); Skipped = @() }
+    $known = Get-RustCfgKnownKeys $Path
+    if ($known.Count -lt 50) { return $res }
+    $keep = @()
+    $skip = @()
+    foreach ($l in @($Lines)) {
+        if (-not $l) { continue }
+        if ($l -match '^\s*([A-Za-z0-9_.]+)') {
+            $k = $matches[1].ToLower()
+            if ($k -eq 'fps.graph' -or $known.ContainsKey($k)) { $keep += [string]$l }
+            else { $skip += $k }
+        } else { $keep += [string]$l }
+    }
+    $res.Lines   = @($keep)
+    $res.Skipped = @($skip | Select-Object -Unique)
+    return $res
+}
+
+function Get-RustCfgAudit {
+    param([string[]]$Keys)
+    $dir  = Get-RustCfgDir
+    $path = if ($dir) { Join-Path $dir 'client.cfg' } else { '' }
+    $known = Get-RustCfgKnownKeys $path
+    $ok = @(); $missing = @()
+    foreach ($k in @($Keys)) {
+        if (-not $k) { continue }
+        if ($known.ContainsKey(([string]$k).ToLower())) { $ok += [string]$k } else { $missing += [string]$k }
+    }
+    return [pscustomobject]@{
+        Ready   = ($known.Count -ge 50)
+        Total   = $known.Count
+        Ok      = @($ok)
+        Missing = @($missing)
+        Path    = $path
+    }
 }
 
 function Get-PhysicalCoreMask {
@@ -1056,8 +1160,18 @@ function Invoke-RustGpu {
     if (-not $script:State.ContainsKey('RustGpuOld')) {
         $script:State['RustGpuOld'] = if ($null -eq $old) { '' } else { [string]$old }
     }
-    Set-RegStr $k $script:RustExe 'GpuPreference=2;'
-    Write-Log 'RustClient.exe → «Высокая производительность» GPU' 'ok'
+    $parts = @()
+    if ($old) {
+        foreach ($p in ([string]$old).Split(';')) {
+            $t = $p.Trim()
+            if (-not $t) { continue }
+            if ($t -match '^GpuPreference\s*=') { continue }
+            $parts += $t
+        }
+    }
+    $parts += 'GpuPreference=2'
+    Set-RegStr $k $script:RustExe (($parts -join ';') + ';')
+    Write-Log 'RustClient.exe → «Высокая производительность» GPU (прочие флаги сохранены)' 'ok'
 }
 
 function Undo-RustGpu {
@@ -1122,7 +1236,11 @@ function Invoke-RustCfg {
     $file = Join-Path $dir 'client.cfg'
     $null = Backup-FileOnce $file 'client.cfg'
     Backup-FileStamp $file 'client'
-    Merge-CfgFile -Path $file -Lines $script:RustCfgLines -ManagedKeys $script:RustCfgManaged
+    $sel = Select-RustCfgLines $script:RustCfgLines $file
+    Merge-CfgFile -Path $file -Lines $sel.Lines -ManagedKeys $script:RustCfgManaged
+    if ($sel.Skipped.Count -gt 0) {
+        Write-Log ('client.cfg: ключи, которых нет в этой версии Rust, пропущены — ' + (@($sel.Skipped) -join ', ')) 'info'
+    }
     Write-Log 'client.cfg: трава и пост-эффекты выключены (бэкап сохранён)' 'ok'
 }
 
@@ -1303,7 +1421,14 @@ $script:RustMaxCfgLines = @(
     'effects.otherplayerslightflares False',
     'effects.creationeffects False',
     'effects.maxgibs 0',
+    'effects.maxgibdist 0',
     'particle.quality 25',
+    'graphicssettings.pixellightcount 0',
+    'graphics.collapserenderers True',
+    'graphics.vsync 0',
+    'mesh.reducebonecountonlowlod True',
+    'sss.halfres True',
+    'sss.quality 0',
     'grass.quality 0',
     'grass.distance 0',
     'grass.displacement False',
@@ -1336,7 +1461,10 @@ $script:RustMaxCfgManaged = @(
     'effects.bloom','effects.lensdirt','effects.motionblur','effects.shafts',
     'effects.sharpen','effects.vignet','effects.hurtoverlay',
     'effects.otherplayerslightflares','effects.creationeffects','effects.maxgibs',
-    'particle.quality','grass.quality','grass.distance','grass.displacement',
+    'effects.maxgibdist','particle.quality','graphicssettings.pixellightcount',
+    'graphics.collapserenderers','graphics.vsync','mesh.reducebonecountonlowlod',
+    'sss.halfres','sss.quality',
+    'grass.quality','grass.distance','grass.displacement',
     'decor.quality','terrain.quality','tree.quality','tree.meshes','mesh.quality',
     'water.quality','water.reflections','sss.enabled','reflection.planarreflections',
     'legs.enablelegs','player.footik','ui.showinventoryplayer','fps.graph',
@@ -1353,7 +1481,11 @@ function Invoke-RustMaxCfg {
     $file = Join-Path $dir 'client.cfg'
     $null = Backup-FileOnce $file 'client.cfg-max'
     Backup-FileStamp $file 'client-max'
-    Merge-CfgFile -Path $file -Lines $script:RustMaxCfgLines -ManagedKeys $script:RustMaxCfgManaged
+    $sel = Select-RustCfgLines $script:RustMaxCfgLines $file
+    Merge-CfgFile -Path $file -Lines $sel.Lines -ManagedKeys $script:RustMaxCfgManaged
+    if ($sel.Skipped.Count -gt 0) {
+        Write-Log ('client.cfg: не поддерживаются этой версией Rust и пропущены — ' + (@($sel.Skipped) -join ', ')) 'info'
+    }
     Write-Log 'client.cfg: максимальная легальная оптимизация графики применена (бэкап сохранён)' 'ok'
 }
 function Undo-RustMaxCfg {
@@ -1366,6 +1498,50 @@ function Undo-RustMaxCfg {
     } else {
         Write-Log 'client.cfg: резервная копия не найдена' 'warn'
     }
+}
+
+# ============================================================
+#  RUST 2026: отчёт о совместимости клиента и cfg
+# ============================================================
+function Get-RustCompatText {
+    $info = Get-RustClientInfo
+    if (-not $info.Found) {
+        return "RUST не найден.`r`n`r`nУстановите игру в Steam и запустите её один раз — после этого появится cfg и станет доступна проверка совместимости."
+    }
+    $keys = @()
+    foreach ($l in @($script:RustMaxCfgLines)) {
+        if ($l -match '^\s*([A-Za-z0-9_.]+)') { $keys += $matches[1] }
+    }
+    $audit = Get-RustCfgAudit $keys
+    $lines = @()
+    $lines += 'RUST · СОВМЕСТИМОСТЬ С ТЕКУЩЕЙ ВЕРСИЕЙ'
+    $lines += ''
+    $lines += ('Клиент          : ' + $info.Version + '  (Unity ' + $info.Unity + ')')
+    $lines += ('Сборка          : ' + $info.Build + ' · обновлён ' + $info.Updated)
+    $lines += ('Размер          : ' + $info.SizeMb + ' МБ')
+    $lines += ('EasyAntiCheat   : ' + $(if ($info.Eac) { 'найден, не изменяется' } else { 'не найден в папке игры' }))
+    $lines += ('cfg             : ' + $info.CfgPath)
+    $lines += ('Ключей в cfg    : ' + $audit.Total)
+    $lines += ''
+    if (-not $audit.Ready) {
+        $lines += 'cfg ещё не создан игрой: запустите RUST один раз, выйдите и повторите проверку.'
+        $lines += 'До этого применяется только проверенный базовый набор конваров.'
+    } else {
+        $lines += ('Проверено ключей: ' + $audit.Ok.Count + ' из ' + $keys.Count)
+        if ($audit.Missing.Count -eq 0) {
+            $lines += 'Все конвары профиля поддерживаются этим клиентом.'
+        } else {
+            $lines += ('Не поддерживаются и будут пропущены: ' + ($audit.Missing -join ', '))
+        }
+        $lines += ''
+        $lines += 'Профиль применяется только к ключам, которые игра сама'
+        $lines += 'использует в client.cfg. Новые обновления Rust не ломают'
+        $lines += 'настройки: неизвестные ключи автоматически пропускаются.'
+    }
+    $lines += ''
+    $lines += 'Клиент не модифицируется: меняются только cfg-файлы,'
+    $lines += 'а exe/dll сверяются по снимку до и после.'
+    return ($lines -join "`r`n")
 }
 
 # ============================================================
@@ -1736,6 +1912,45 @@ function Invoke-StickyKeysOff {
     Write-Log 'Случайный вызов залипания/фильтрации клавиш отключён' 'ok'
 }
 function Undo-StickyKeysOff { Undo-StringBatch 'StickyKeysOld'; Write-Log 'Спец. возможности клавиатуры восстановлены' 'ok' }
+
+# 11. Windows 11: оптимизации для оконных игр (SwapEffectUpgrade)
+function Invoke-WindowedOpt {
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    Ensure-RegKey $k
+    $old = Get-Reg $k 'DirectXUserGlobalSettings'
+    if (-not $script:State.ContainsKey('WindowedOptOld')) {
+        $script:State['WindowedOptOld'] = if ($null -eq $old) { '~none~' } else { [string]$old }
+    }
+    $parts = @()
+    if ($old) {
+        foreach ($p in ([string]$old).Split(';')) {
+            $t = $p.Trim()
+            if (-not $t) { continue }
+            if ($t -match '^SwapEffectUpgradeEnable\s*=') { continue }
+            $parts += $t
+        }
+    }
+    $parts += 'SwapEffectUpgradeEnable=1'
+    Set-RegStr $k 'DirectXUserGlobalSettings' (($parts -join ';') + ';')
+    Write-Log 'Оптимизации оконных игр Windows 11 включены (SwapEffectUpgrade)' 'ok'
+}
+function Undo-WindowedOpt {
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    $old = [string]$script:State['WindowedOptOld']
+    if ($old -eq '~none~') { Remove-RegValue $k 'DirectXUserGlobalSettings' }
+    elseif ($old) { Set-RegStr $k 'DirectXUserGlobalSettings' $old }
+    Write-Log 'Настройка оконных игр восстановлена' 'ok'
+}
+
+# 12. Storage Sense: без фоновой автоочистки во время игры
+function Invoke-StorageSenseOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'; N = '01'; V = 0 }
+    )
+    Set-DwordBatch 'StorageSenseOld' $items
+    Write-Log 'Автоматическая очистка Storage Sense приостановлена' 'ok'
+}
+function Undo-StorageSenseOff { Undo-DwordBatch 'StorageSenseOld'; Write-Log 'Storage Sense восстановлен' 'ok' }
 
 # ============================================================
 #  WINDOWS CARE ENGINE — очистка
@@ -3521,6 +3736,16 @@ $script:Tweaks = @(
         Name = 'Защита от случайного залипания клавиш'
         Desc = 'Отключает горячие клавиши Sticky/Filter/Toggle Keys — Shift ×5 больше не блокирует управление в игре.'
         Apply = { Invoke-StickyKeysOff }; Undo = { Undo-StickyKeysOff } }
+
+    [pscustomobject]@{ Id = 'windowedopt'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Оптимизации оконных игр Windows 11'
+        Desc = 'SwapEffectUpgrade для DirectX: меньше задержка и разрывы в оконном/безрамочном режиме. Обратимо.'
+        Apply = { Invoke-WindowedOpt }; Undo = { Undo-WindowedOpt } }
+
+    [pscustomobject]@{ Id = 'storagesense'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Пауза Storage Sense'
+        Desc = 'Windows не запускает фоновую автоочистку диска во время игры — меньше микрофризов на SSD/HDD.'
+        Apply = { Invoke-StorageSenseOff }; Undo = { Undo-StorageSenseOff } }
 )
 
 # Восстанавливаем выбор пользователя между запусками
@@ -3707,6 +3932,7 @@ $script:RustExe     = Find-RustExe
 $script:RustCfgDir  = $null
 $script:IsAdmin     = Test-Admin
 $script:RustRunning = Test-RustRunning
+$script:RustInfo    = Get-RustClientInfo
 
 # ============================================================
 #  ТЕМА И АНИМИРОВАННЫЕ КОНТРОЛЫ (C#)
@@ -3716,6 +3942,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -3946,9 +4173,17 @@ namespace RustSuite
             {
                 _target = value;
                 ScrollableControl sc = _target as ScrollableControl;
-                if (sc != null) { sc.Scroll += delegate { Invalidate(); }; }
+                if (sc != null)
+                {
+                    sc.Scroll += delegate { RequestSync(); };
+                    sc.Resize += delegate { RequestSync(); };
+                    sc.ClientSizeChanged += delegate { RequestSync(); };
+                    sc.VisibleChanged += delegate { RequestSync(); };
+                    sc.ControlAdded += delegate { RequestSync(); };
+                    sc.ControlRemoved += delegate { RequestSync(); };
+                }
                 Visible = false;
-                Sync();
+                RequestSync();
             }
         }
 
@@ -3961,10 +4196,17 @@ namespace RustSuite
             Cursor = Cursors.Hand;
             _arrowH = 16;
             try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
+            // Таймер не тикает постоянно: он запускается только после
+            // изменения прокрутки/размера и сразу останавливается.
             _t = new Timer();
-            _t.Interval = 70;
-            _t.Tick += delegate { Sync(); };
-            _t.Start();
+            _t.Interval = 24;
+            _t.Tick += delegate { _t.Stop(); Sync(); };
+        }
+
+        public void RequestSync()
+        {
+            if (IsDisposed || _t == null) return;
+            if (!_t.Enabled) _t.Start();
         }
 
         protected override void Dispose(bool disposing)
@@ -4263,15 +4505,102 @@ namespace RustSuite
         }
     }
 
+    // Плавное появление раздела: снимок новой страницы проявляется
+    // на фоне темы за несколько кадров. В отличие от прозрачной вуали,
+    // снимок не может скрыть содержимое под собой.
+    public class FadeVeil : Control, IAnim
+    {
+        private Bitmap _snap;
+        private int _alpha;
+        private int _step;
+
+        public FadeVeil()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
+            Visible = false;
+            Enabled = false;
+            TabStop = false;
+        }
+
+        public void Begin(Bitmap snap, int frames)
+        {
+            Cancel();
+            if (snap == null) return;
+            _snap = snap;
+            _alpha = 0;
+            _step = Math.Max(12, 255 / Math.Max(1, frames));
+            Visible = true;
+            try { BringToFront(); } catch { }
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        public void Cancel()
+        {
+            try { Anim.Remove(this); } catch { }
+            if (_snap != null) { try { _snap.Dispose(); } catch { } _snap = null; }
+            _alpha = 0;
+            Visible = false;
+        }
+
+        public bool Tick()
+        {
+            if (_snap == null) { Visible = false; return false; }
+            _alpha += _step;
+            if (_alpha >= 255)
+            {
+                _alpha = 255;
+                Invalidate();
+                Bitmap b = _snap;
+                _snap = null;
+                Visible = false;
+                if (b != null) { try { b.Dispose(); } catch { } }
+                return false;
+            }
+            Invalidate();
+            return true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Theme.Bg);
+            if (_snap == null || _alpha <= 0) return;
+            ImageAttributes ia = new ImageAttributes();
+            try
+            {
+                ColorMatrix cm = new ColorMatrix();
+                cm.Matrix33 = _alpha / 255f;
+                ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                e.Graphics.DrawImage(_snap, new Rectangle(0, 0, Width, Height),
+                    0, 0, _snap.Width, _snap.Height, GraphicsUnit.Pixel, ia);
+            }
+            finally { ia.Dispose(); }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _snap != null) { try { _snap.Dispose(); } catch { } _snap = null; }
+            base.Dispose(disposing);
+        }
+    }
+
     public class HeaderPanel : Panel, IAnim
     {
         private float _phase = 0.15f;
         private int _skip;
+        private int _idle;
         public HeaderPanel()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             BackColor = Theme.PanelBg;
+            Anim.Add(this);
+        }
+        public void Wake()
+        {
+            _idle = 0;
             Anim.Add(this);
         }
         public bool Tick()
@@ -4281,6 +4610,10 @@ namespace RustSuite
             _phase += 0.0114f;
             if (_phase > 1.35f) _phase = -0.25f;
             _skip++;
+            // После ~20 секунд без действий анимация засыпает и
+            // просыпается от навигации, смены темы или наведения.
+            _idle++;
+            if (_idle > 1200) return false;
             if (_skip < 3) return true;
             _skip = 0;
             Invalidate();
@@ -4388,8 +4721,14 @@ namespace RustSuite
             if (_p > 0.01f) line = Theme.Lerp(line, Color.FromArgb(120, Theme.Accent), _p);
             using (GraphicsPath p = Theme.Round(r, 9f))
             {
-                using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    Theme.Lerp(fill, Color.White, 0.035f), fill, LinearGradientMode.Vertical))
+                    g.FillPath(b, p);
                 using (Pen pen = new Pen(line, 1f)) g.DrawPath(pen, p);
+                // Тонкий блик по верхней кромке — карточка выглядит объёмнее.
+                using (Pen hi = new Pen(Color.FromArgb(26, 255, 255, 255), 1f))
+                    g.DrawLine(hi, 10, 1.5f, Math.Max(11, Width - 10), 1.5f);
             }
             if (_p > 0.02f)
             {
@@ -4957,6 +5296,14 @@ namespace RustSuite
             Value = v == null ? "" : v;
             _glow = 1f;
             Anim.Add(this);
+            Invalidate();
+        }
+
+        public void SetHint(string v)
+        {
+            string n = v == null ? "" : v;
+            if (Hint == n) return;
+            Hint = n;
             Invalidate();
         }
 
@@ -5705,6 +6052,15 @@ function Get-TrustReportText {
     [void]$sb.AppendLine(('Состояние          : ' + $(if (Test-Path -LiteralPath $script:StateFile) { 'state.xml на месте' } else { 'будет создан при первом сохранении' })))
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('ЦЕЛОСТНОСТЬ КЛИЕНТА ИГРЫ')
+    $ri = if ($script:RustInfo) { $script:RustInfo } else { Get-RustClientInfo }
+    if ($ri.Found) {
+        [void]$sb.AppendLine(('  Клиент            : ' + $ri.Version + '  (Unity ' + $ri.Unity + ')'))
+        [void]$sb.AppendLine(('  Сборка            : ' + $ri.Build + ' · обновлён ' + $ri.Updated))
+        [void]$sb.AppendLine(('  EasyAntiCheat     : ' + $(if ($ri.Eac) { 'найден, не изменяется' } else { 'не найден' })))
+        [void]$sb.AppendLine(('  cfg               : ' + $(if ($ri.CfgReady) { 'ключей ' + $ri.CfgKeys + ' — профиль подстраивается автоматически' } else { 'ещё не создан игрой — базовый набор' })))
+    } else {
+        [void]$sb.AppendLine('  Клиент            : RUST не найден в библиотеках Steam')
+    }
     foreach ($line in ((Get-ClientGuardText) -split "`r?`n")) { [void]$sb.AppendLine('  ' + $line) }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('СТАТИЧЕСКИЙ АУДИТ ИСХОДНИКА')
@@ -5971,16 +6327,11 @@ function Update-HomeLive {
             if ($Cpu -ge 0) {
                 $script:HomeCpuVal.Text = ('CPU  {0}%' -f $Cpu)
                 $script:HomeCpuVal.ForeColor = if ($Cpu -ge 85) { [RustSuite.Theme]::Warn } else { [RustSuite.Theme]::TextC }
-            } else {
-                $script:HomeCpuVal.Text = 'CPU  —'
-                $script:HomeCpuVal.ForeColor = [RustSuite.Theme]::Muted
             }
         }
         if ($script:HomeRamVal -and -not $script:HomeRamVal.IsDisposed) {
             if ($Ram -ge 0) {
                 $script:HomeRamVal.Text = ('ОЗУ  {0}%   ·   диск свободно {1:N1} ГБ ({2:N0}%)' -f $Ram, $DiskFreeGb, $DiskFreePct)
-            } else {
-                $script:HomeRamVal.Text = 'ОЗУ  —'
             }
         }
 
@@ -5990,15 +6341,17 @@ function Update-HomeLive {
                 $mc.SetValue(('{0} / {1}' -f $st.On, $st.Total))
             }
             $dc = $script:HomeCards['disk']
-            if ($dc -and -not $dc.IsDisposed) {
-                if ($DiskFreeGb -gt 0) { $dc.SetValue(('{0:N1} ГБ' -f $DiskFreeGb)) }
-                else { $dc.SetValue('н/д') }
+            if ($dc -and -not $dc.IsDisposed -and $DiskFreeGb -gt 0) {
+                $dc.SetValue(('{0:N1} ГБ' -f $DiskFreeGb))
             }
             $rc = $script:HomeCards['rust']
             if ($rc -and -not $rc.IsDisposed) {
                 if ($script:RustExe) {
                     if ($script:RustRunning) { $rc.SetValue('ЗАПУЩЕН') }
                     else { $rc.SetValue('НАЙДЕН') }
+                    if ($script:RustInfo -and $script:RustInfo.Unity) {
+                        $rc.SetHint('Unity ' + $script:RustInfo.Unity)
+                    }
                 } else { $rc.SetValue('НЕ НАЙДЕН') }
             }
         }
@@ -6006,7 +6359,12 @@ function Update-HomeLive {
         if ($script:HomeStatusLbl -and -not $script:HomeStatusLbl.IsDisposed) {
             $applied = @(Get-AppliedTweaks).Count
             $adm = if ($script:IsAdmin) { 'администратор' } else { 'без прав администратора' }
-            $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}' -f $applied, $adm, $script:ThemeName)
+            $rv = ''
+            if ($script:RustInfo -and $script:RustInfo.Found -and $script:RustInfo.Unity) {
+                $rv = '   ·   RUST ' + $script:RustInfo.Unity
+                if ($script:RustInfo.CfgReady) { $rv += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}{3}' -f $applied, $adm, $script:ThemeName, $rv)
         }
     } catch {}
 }
@@ -6137,7 +6495,7 @@ function Show-HomePanel {
     $cards = @(
         @{ Key = 'modules'; Label = 'МОДУЛИ'; Value = ('{0} / {1}' -f $st.On, $st.Total); Hint = 'включено сейчас';  Accent = [RustSuite.Theme]::Accent },
         @{ Key = 'disk';    Label = 'СВОБОДНО'; Value = '—'; Hint = 'на системном диске'; Accent = [RustSuite.Theme]::Secondary },
-        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
+        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
     )
     $ci = 0
     foreach ($cd in $cards) {
@@ -6252,7 +6610,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard', 'FadeVeil') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -6293,7 +6651,8 @@ if ($SelfTest) {
 
     # Дополнительные безопасные твики v5.0
     foreach ($id in 'gamebar', 'widgets', 'copilot', 'recall', 'suggestions',
-                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys') {
+                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys',
+                    'windowedopt', 'storagesense') {
         if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
             Write-Host ("MISSING SAFE TWEAK: " + $id); $fail++
         }
@@ -6497,6 +6856,35 @@ if ($SelfTest) {
     } catch { Write-Host ('CFG MERGE ERROR: ' + $_.Exception.Message); $fail++ }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 
+    # RUST 2026 / Unity 6.3: адаптивная фильтрация конваров (v6.0)
+    foreach ($fn in 'Get-RustClientInfo', 'Get-RustCfgKnownKeys', 'Select-RustCfgLines',
+                    'Get-RustCfgAudit', 'Get-RustCompatText', 'Invoke-WindowedOpt',
+                    'Undo-WindowedOpt', 'Invoke-StorageSenseOff', 'Undo-StorageSenseOff') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING RUST2026 FUNCTION: ' + $fn); $fail++
+        }
+    }
+    $rt = Join-Path $env:TEMP ('rustopt-cfgkeys-' + [Guid]::NewGuid().ToString('N') + '.cfg')
+    try {
+        $many = @()
+        for ($i = 0; $i -lt 60; $i++) { $many += ('known.key' + $i + ' 1') }
+        $many += 'graphics.af 1'
+        [IO.File]::WriteAllText($rt, (($many -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        $known = Get-RustCfgKnownKeys $rt
+        if ($known.Count -lt 50) { Write-Host ('CFG KEY PARSER BROKEN: ' + $known.Count); $fail++ }
+        $sel = Select-RustCfgLines @('graphics.af 16', 'not.a.key 0', 'fps.graph 1') $rt
+        if (@($sel.Lines).Count -ne 2) { Write-Host 'CFG ADAPTIVE KEPT WRONG COUNT'; $fail++ }
+        if (@($sel.Skipped) -notcontains 'not.a.key') { Write-Host 'CFG ADAPTIVE DID NOT SKIP UNKNOWN'; $fail++ }
+        if ((@($sel.Lines) -join ' ') -notmatch 'fps\.graph 1') { Write-Host 'CFG ADAPTIVE DROPPED FPS.GRAPH'; $fail++ }
+        $empty = Join-Path $env:TEMP ('rustopt-empty-' + [Guid]::NewGuid().ToString('N') + '.cfg')
+        [IO.File]::WriteAllText($empty, "only.one 1`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        $fallback = Select-RustCfgLines @('graphics.af 16', 'not.a.key 0') $empty
+        if (@($fallback.Lines).Count -ne 2) { Write-Host 'CFG ADAPTIVE FALLBACK BROKEN'; $fail++ }
+        Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
+        if (-not (Get-RustCompatText)) { Write-Host 'RUST COMPAT TEXT EMPTY'; $fail++ }
+    } catch { Write-Host ('RUST2026 CHECK ERROR: ' + $_.Exception.Message); $fail++ }
+    finally { Remove-Item -LiteralPath $rt -Force -ErrorAction SilentlyContinue }
+
     # Профили и проверяемый отчёт о надёжности (v5.1)
     foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',
                     'Get-AuditSourcePath', 'Get-SourceFingerprint', 'Get-TrustScan',
@@ -6609,7 +6997,9 @@ $script:Themes = @(
     @{ Name='OBSIDIAN';    Bg=[System.Drawing.Color]::FromArgb(10,10,12); Panel=[System.Drawing.Color]::FromArgb(18,18,22); Card=[System.Drawing.Color]::FromArgb(26,26,32); CardHover=[System.Drawing.Color]::FromArgb(36,36,44); Border=[System.Drawing.Color]::FromArgb(60,60,72);  Accent=[System.Drawing.Color]::FromArgb(180,180,200); AccentLt=[System.Drawing.Color]::FromArgb(230,230,240); Secondary=[System.Drawing.Color]::FromArgb(140,140,160); Glow=[System.Drawing.Color]::FromArgb(80,80,94); TextC=[System.Drawing.Color]::FromArgb(248,248,250); Muted=[System.Drawing.Color]::FromArgb(152,152,166); Ok=[System.Drawing.Color]::FromArgb(140,216,144); Warn=[System.Drawing.Color]::FromArgb(216,192,112); Err=[System.Drawing.Color]::FromArgb(224,104,120); Field=[System.Drawing.Color]::FromArgb(14,14,18) },
     @{ Name='TOXIC';       Bg=[System.Drawing.Color]::FromArgb(10,16,6);  Panel=[System.Drawing.Color]::FromArgb(18,26,12); Card=[System.Drawing.Color]::FromArgb(26,36,18); CardHover=[System.Drawing.Color]::FromArgb(36,48,26); Border=[System.Drawing.Color]::FromArgb(74,100,42);  Accent=[System.Drawing.Color]::FromArgb(168,230,60); AccentLt=[System.Drawing.Color]::FromArgb(212,255,100); Secondary=[System.Drawing.Color]::FromArgb(240,255,60); Glow=[System.Drawing.Color]::FromArgb(90,140,30); TextC=[System.Drawing.Color]::FromArgb(246,255,234); Muted=[System.Drawing.Color]::FromArgb(160,180,138); Ok=[System.Drawing.Color]::FromArgb(140,255,100); Warn=[System.Drawing.Color]::FromArgb(255,230,60);   Err=[System.Drawing.Color]::FromArgb(255,92,100);  Field=[System.Drawing.Color]::FromArgb(14,20,8) },
     @{ Name='AURORA';      Bg=[System.Drawing.Color]::FromArgb(8,14,22);  Panel=[System.Drawing.Color]::FromArgb(12,22,34); Card=[System.Drawing.Color]::FromArgb(18,32,48); CardHover=[System.Drawing.Color]::FromArgb(26,44,64); Border=[System.Drawing.Color]::FromArgb(46,86,110); Accent=[System.Drawing.Color]::FromArgb(64,224,200); AccentLt=[System.Drawing.Color]::FromArgb(120,255,232); Secondary=[System.Drawing.Color]::FromArgb(150,120,255); Glow=[System.Drawing.Color]::FromArgb(30,140,130); TextC=[System.Drawing.Color]::FromArgb(232,255,252); Muted=[System.Drawing.Color]::FromArgb(140,170,176); Ok=[System.Drawing.Color]::FromArgb(110,235,160); Warn=[System.Drawing.Color]::FromArgb(250,210,90);   Err=[System.Drawing.Color]::FromArgb(255,110,140); Field=[System.Drawing.Color]::FromArgb(10,18,26) },
-    @{ Name='NEON NOIR';   Bg=[System.Drawing.Color]::FromArgb(8,8,12);   Panel=[System.Drawing.Color]::FromArgb(14,14,22); Card=[System.Drawing.Color]::FromArgb(20,20,32); CardHover=[System.Drawing.Color]::FromArgb(30,30,46); Border=[System.Drawing.Color]::FromArgb(56,50,96);  Accent=[System.Drawing.Color]::FromArgb(255,54,140); AccentLt=[System.Drawing.Color]::FromArgb(255,120,190); Secondary=[System.Drawing.Color]::FromArgb(60,230,255); Glow=[System.Drawing.Color]::FromArgb(120,24,90); TextC=[System.Drawing.Color]::FromArgb(245,245,252); Muted=[System.Drawing.Color]::FromArgb(150,148,168); Ok=[System.Drawing.Color]::FromArgb(100,230,170); Warn=[System.Drawing.Color]::FromArgb(250,200,80);   Err=[System.Drawing.Color]::FromArgb(255,90,120);  Field=[System.Drawing.Color]::FromArgb(12,12,18) }
+    @{ Name='NEON NOIR';   Bg=[System.Drawing.Color]::FromArgb(8,8,12);   Panel=[System.Drawing.Color]::FromArgb(14,14,22); Card=[System.Drawing.Color]::FromArgb(20,20,32); CardHover=[System.Drawing.Color]::FromArgb(30,30,46); Border=[System.Drawing.Color]::FromArgb(56,50,96);  Accent=[System.Drawing.Color]::FromArgb(255,54,140); AccentLt=[System.Drawing.Color]::FromArgb(255,120,190); Secondary=[System.Drawing.Color]::FromArgb(60,230,255); Glow=[System.Drawing.Color]::FromArgb(120,24,90); TextC=[System.Drawing.Color]::FromArgb(245,245,252); Muted=[System.Drawing.Color]::FromArgb(150,148,168); Ok=[System.Drawing.Color]::FromArgb(100,230,170); Warn=[System.Drawing.Color]::FromArgb(250,200,80);   Err=[System.Drawing.Color]::FromArgb(255,90,120);  Field=[System.Drawing.Color]::FromArgb(12,12,18) },
+@{ Name='UNITY 6';     Bg=[System.Drawing.Color]::FromArgb(9,12,16);   Panel=[System.Drawing.Color]::FromArgb(16,20,26); Card=[System.Drawing.Color]::FromArgb(22,28,36); CardHover=[System.Drawing.Color]::FromArgb(32,40,50); Border=[System.Drawing.Color]::FromArgb(52,68,86);  Accent=[System.Drawing.Color]::FromArgb(120,190,255); AccentLt=[System.Drawing.Color]::FromArgb(180,225,255); Secondary=[System.Drawing.Color]::FromArgb(120,255,214); Glow=[System.Drawing.Color]::FromArgb(36,96,150); TextC=[System.Drawing.Color]::FromArgb(238,246,255); Muted=[System.Drawing.Color]::FromArgb(146,164,182); Ok=[System.Drawing.Color]::FromArgb(96,224,152); Warn=[System.Drawing.Color]::FromArgb(248,206,96);   Err=[System.Drawing.Color]::FromArgb(255,104,126); Field=[System.Drawing.Color]::FromArgb(12,16,22) },
+@{ Name='SOLAR FLARE';  Bg=[System.Drawing.Color]::FromArgb(20,12,8);   Panel=[System.Drawing.Color]::FromArgb(30,18,12); Card=[System.Drawing.Color]::FromArgb(40,24,16); CardHover=[System.Drawing.Color]::FromArgb(54,32,20); Border=[System.Drawing.Color]::FromArgb(112,64,36);  Accent=[System.Drawing.Color]::FromArgb(255,150,50);  AccentLt=[System.Drawing.Color]::FromArgb(255,196,110); Secondary=[System.Drawing.Color]::FromArgb(255,90,60); Glow=[System.Drawing.Color]::FromArgb(176,80,20); TextC=[System.Drawing.Color]::FromArgb(255,244,232); Muted=[System.Drawing.Color]::FromArgb(190,158,132); Ok=[System.Drawing.Color]::FromArgb(130,214,120); Warn=[System.Drawing.Color]::FromArgb(255,214,80);   Err=[System.Drawing.Color]::FromArgb(255,96,96);  Field=[System.Drawing.Color]::FromArgb(24,14,10) }
 )
 
 $script:ThemeName = 'PURPLE RUSH'
@@ -6708,6 +7098,9 @@ function Update-ThemeSurfaces {
             Update-ControlTree $script:MainForm
             $script:MainForm.Invalidate($true)
         }
+    } catch {}
+    try {
+        if (Get-Command Update-HomeLive -ErrorAction SilentlyContinue) { Update-HomeLive }
     } catch {}
 }
 
@@ -7854,6 +8247,12 @@ $script:ContentScrollStrip = New-Object RustSuite.ScrollStrip
 $script:ContentScrollStrip.Target = $script:RowHost
 $contentWrap.Controls.Add($script:RowHost)
 $contentWrap.Controls.Add($script:ContentScrollStrip)
+
+# Вуаль плавного перехода между разделами.
+$script:FadeVeil = New-Object RustSuite.FadeVeil
+$script:FadeVeil.Dock = 'Fill'
+$contentWrap.Controls.Add($script:FadeVeil)
+try { $script:FadeVeil.BringToFront() } catch {}
 try {
     [RustSuite.WheelHub]::Target = $script:RowHost
     [void][System.Windows.Forms.Application]::AddMessageFilter((New-Object RustSuite.WheelRouter))
@@ -8204,6 +8603,33 @@ function Show-Group {
 
     if ($gid -eq 'rust') {
         $cw = $w
+        $ri = if ($script:RustInfo) { $script:RustInfo } else { Get-RustClientInfo }
+
+        $info = New-Object System.Windows.Forms.Label
+        if ($ri.Found) {
+            $cfgTxt = if ($ri.CfgReady) { [string]$ri.CfgKeys + ' ключей' } else { 'создастся после первого запуска' }
+            $eacTxt = if ($ri.Eac) { 'найден, не изменяется' } else { 'не найден' }
+            $info.Text = ('Клиент ' + $ri.Version + '  ·  Unity ' + $ri.Unity + '  ·  cfg: ' + $cfgTxt + "`r`n" +
+                          'Сборка ' + $ri.Build + ' от ' + $ri.Updated + '  ·  EAC: ' + $eacTxt)
+        } else {
+            $info.Text = 'RUST не найден. Установите игру в Steam и запустите её один раз — появится cfg и станет доступна проверка совместимости.'
+        }
+        $info.Font      = [RustSuite.Theme]::FSmall
+        $info.ForeColor = [RustSuite.Theme]::Muted
+        $info.BackColor = [System.Drawing.Color]::Transparent
+        $info.AutoSize  = $false
+        $info.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 38)
+        $script:RowHost.Controls.Add($info)
+
+        $btnCompat = New-Object RustSuite.FlatButton
+        $btnCompat.Style  = 'Ghost'
+        $btnCompat.Text   = '◈  ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG'
+        $btnCompat.Font   = [RustSuite.Theme]::FSmall
+        $btnCompat.Bounds = New-Object System.Drawing.Rectangle 0, ($y + (S 42)), $cw, (S 34)
+        $btnCompat.Add_Click({ Show-TextDialog 'RUST 2026' (Get-RustCompatText) })
+        $script:RowHost.Controls.Add($btnCompat)
+        $y += S 88
+
         $btnLaunch = New-Object RustSuite.FlatButton
         $btnLaunch.Style  = 'Primary'
         $btnLaunch.Text   = '▶  ЗАПУСТИТЬ RUST С ОПТИМИЗАЦИЕЙ'
@@ -8254,6 +8680,27 @@ function Show-Group {
         try { [RustSuite.Native]::SetRedraw($script:RowHost, $true) } catch {}
         try { $script:RowHost.Invalidate($true) } catch {}
         try { $script:RowHost.Update() } catch {}
+        try { if ($script:ContentScrollStrip) { $script:ContentScrollStrip.RequestSync() } } catch {}
+        try { if ($script:NavScrollStrip) { $script:NavScrollStrip.RequestSync() } } catch {}
+        try { if ($script:Header) { $script:Header.Wake() } } catch {}
+        try {
+            if ($script:FadeVeil -and -not $script:FadeVeil.IsDisposed) {
+                $snap = $null
+                try {
+                    $rw = [int]$script:RowHost.ClientSize.Width
+                    $rh = [int]$script:RowHost.ClientSize.Height
+                    if ($rw -gt 4 -and $rh -gt 4) {
+                        $snap = New-Object System.Drawing.Bitmap $rw, $rh
+                        $rect = New-Object System.Drawing.Rectangle 0, 0, $rw, $rh
+                        $script:RowHost.DrawToBitmap($snap, $rect)
+                    }
+                } catch {
+                    if ($snap) { try { $snap.Dispose() } catch {} }
+                    $snap = $null
+                }
+                $script:FadeVeil.Begin($snap, 7)
+            }
+        } catch {}
     }
 }
 
@@ -9503,10 +9950,16 @@ function Update-Stats {
             $script:RustState.Text = 'не найден — запустите игру через Steam'
             $script:RustState.ForeColor = [RustSuite.Theme]::Warn
         } elseif ($script:RustRunning) {
-            $script:RustState.Text = 'запущен · приоритет High · бинды активны'
+            $rver = if ($script:RustInfo -and $script:RustInfo.Unity) { ' · Unity ' + $script:RustInfo.Unity } else { '' }
+            $script:RustState.Text = 'запущен · High' + $rver + ' · бинды активны'
             $script:RustState.ForeColor = [RustSuite.Theme]::Ok
         } else {
-            $script:RustState.Text = 'готов · cfg можно менять'
+            $rver = ''
+            if ($script:RustInfo -and $script:RustInfo.Unity) {
+                $rver = ' · Unity ' + $script:RustInfo.Unity
+                if ($script:RustInfo.CfgReady) { $rver += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            $script:RustState.Text = 'готов' + $rver
             $script:RustState.ForeColor = [RustSuite.Theme]::Muted
         }
     }
@@ -9833,6 +10286,7 @@ $form.Add_Shown({
                         Show-Group 'settings'
                         Apply-Theme 'MIDNIGHT' -Save
                         Update-ThemeSurfaces
+                        if (@($script:Themes).Count -lt 14) { throw 'THEME COUNT TOO LOW' }
                         Restart-SettingsSoon
                     }
                     8 {
@@ -9914,13 +10368,28 @@ $form.Add_Shown({
                         Update-Stats
                         $score = Get-OptimizationScore
                         if ($score -le 0) { throw 'HOME SCORE IS ZERO' }
+                        if ($script:RustExe -and (-not $script:RustInfo -or -not $script:RustInfo.Found -or -not $script:RustInfo.Version)) { throw 'RUST INFO MISSING' }
+                        Write-Host ('RUST info=' + $(if ($script:RustInfo) { $script:RustInfo.Version + ' Unity ' + $script:RustInfo.Unity + ' cfg=' + $script:RustInfo.CfgKeys } else { 'n/a' }))
                         Write-Host ('HOME score=' + $score + ' cards=' + $cards.Count +
                                     ' gauge=' + $script:HomeGauge.Width + 'x' + $script:HomeGauge.Height +
                                     ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
                         Write-Host 'HOME OK'
+                    }
+                    12 {
+                        try { $script:ProbeTimer.Stop() } catch {}
+                        Apply-Theme 'PURPLE RUSH' -Save
+                        Update-ThemeSurfaces
                         if ($env:RUSTOPT_SHOT) {
                             try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
                                 $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                while ($sw.ElapsedMilliseconds -lt 700) {
+                                    [System.Windows.Forms.Application]::DoEvents()
+                                    Start-Sleep -Milliseconds 15
+                                }
+                                $sw.Stop()
                                 $form.Refresh()
                                 $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
                                 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -9930,10 +10399,6 @@ $form.Add_Shown({
                                 $bmp.Dispose()
                             } catch {}
                         }
-                    }
-                    12 {
-                        Apply-Theme 'PURPLE RUSH' -Save
-                        Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'
                         $script:ProbeTimer.Stop()
                         $script:Busy = $false

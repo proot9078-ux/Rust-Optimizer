@@ -286,6 +286,16 @@ $script:Tweaks = @(
         Name = 'Защита от случайного залипания клавиш'
         Desc = 'Отключает горячие клавиши Sticky/Filter/Toggle Keys — Shift ×5 больше не блокирует управление в игре.'
         Apply = { Invoke-StickyKeysOff }; Undo = { Undo-StickyKeysOff } }
+
+    [pscustomobject]@{ Id = 'windowedopt'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Оптимизации оконных игр Windows 11'
+        Desc = 'SwapEffectUpgrade для DirectX: меньше задержка и разрывы в оконном/безрамочном режиме. Обратимо.'
+        Apply = { Invoke-WindowedOpt }; Undo = { Undo-WindowedOpt } }
+
+    [pscustomobject]@{ Id = 'storagesense'; Group = 'sys'; Risk = $false; Default = $true
+        Name = 'Пауза Storage Sense'
+        Desc = 'Windows не запускает фоновую автоочистку диска во время игры — меньше микрофризов на SSD/HDD.'
+        Apply = { Invoke-StorageSenseOff }; Undo = { Undo-StorageSenseOff } }
 )
 
 # Восстанавливаем выбор пользователя между запусками
@@ -472,3 +482,4 @@ $script:RustExe     = Find-RustExe
 $script:RustCfgDir  = $null
 $script:IsAdmin     = Test-Admin
 $script:RustRunning = Test-RustRunning
+$script:RustInfo    = Get-RustClientInfo

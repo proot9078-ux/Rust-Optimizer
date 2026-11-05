@@ -33,7 +33,7 @@ if ($SelfTest) {
     if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { Write-Host 'DUPLICATE TWEAK IDS'; $fail++ }
 
     # Кастомные контролы скомпилировались
-    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard') {
+    foreach ($tn in 'Card', 'FlatButton', 'NavButton', 'ProgressStrip', 'Spinner', 'HeaderPanel', 'SlideTween', 'SmoothScrollPanel', 'WheelRouter', 'ThemeTile', 'HealthRow', 'ScrollStrip', 'RingGauge', 'Sparkline', 'StatCard', 'FadeVeil') {
         try {
             $null = [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)
             if (-not [System.Type]::GetType('RustSuite.' + $tn + ', ' + [RustSuite.Card].Assembly.FullName, $false)) {
@@ -74,7 +74,8 @@ if ($SelfTest) {
 
     # Дополнительные безопасные твики v5.0
     foreach ($id in 'gamebar', 'widgets', 'copilot', 'recall', 'suggestions',
-                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys') {
+                    'searchweb', 'bgappsglobal', 'transparency', 'autoplay', 'stickykeys',
+                    'windowedopt', 'storagesense') {
         if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
             Write-Host ("MISSING SAFE TWEAK: " + $id); $fail++
         }
@@ -277,6 +278,35 @@ if ($SelfTest) {
         if ($txt -notmatch 'grass\.displacement false') { Write-Host 'CFG MERGE VALUE FAILED'; $fail++ }
     } catch { Write-Host ('CFG MERGE ERROR: ' + $_.Exception.Message); $fail++ }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+
+    # RUST 2026 / Unity 6.3: адаптивная фильтрация конваров (v6.0)
+    foreach ($fn in 'Get-RustClientInfo', 'Get-RustCfgKnownKeys', 'Select-RustCfgLines',
+                    'Get-RustCfgAudit', 'Get-RustCompatText', 'Invoke-WindowedOpt',
+                    'Undo-WindowedOpt', 'Invoke-StorageSenseOff', 'Undo-StorageSenseOff') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING RUST2026 FUNCTION: ' + $fn); $fail++
+        }
+    }
+    $rt = Join-Path $env:TEMP ('rustopt-cfgkeys-' + [Guid]::NewGuid().ToString('N') + '.cfg')
+    try {
+        $many = @()
+        for ($i = 0; $i -lt 60; $i++) { $many += ('known.key' + $i + ' 1') }
+        $many += 'graphics.af 1'
+        [IO.File]::WriteAllText($rt, (($many -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        $known = Get-RustCfgKnownKeys $rt
+        if ($known.Count -lt 50) { Write-Host ('CFG KEY PARSER BROKEN: ' + $known.Count); $fail++ }
+        $sel = Select-RustCfgLines @('graphics.af 16', 'not.a.key 0', 'fps.graph 1') $rt
+        if (@($sel.Lines).Count -ne 2) { Write-Host 'CFG ADAPTIVE KEPT WRONG COUNT'; $fail++ }
+        if (@($sel.Skipped) -notcontains 'not.a.key') { Write-Host 'CFG ADAPTIVE DID NOT SKIP UNKNOWN'; $fail++ }
+        if ((@($sel.Lines) -join ' ') -notmatch 'fps\.graph 1') { Write-Host 'CFG ADAPTIVE DROPPED FPS.GRAPH'; $fail++ }
+        $empty = Join-Path $env:TEMP ('rustopt-empty-' + [Guid]::NewGuid().ToString('N') + '.cfg')
+        [IO.File]::WriteAllText($empty, "only.one 1`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        $fallback = Select-RustCfgLines @('graphics.af 16', 'not.a.key 0') $empty
+        if (@($fallback.Lines).Count -ne 2) { Write-Host 'CFG ADAPTIVE FALLBACK BROKEN'; $fail++ }
+        Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
+        if (-not (Get-RustCompatText)) { Write-Host 'RUST COMPAT TEXT EMPTY'; $fail++ }
+    } catch { Write-Host ('RUST2026 CHECK ERROR: ' + $_.Exception.Message); $fail++ }
+    finally { Remove-Item -LiteralPath $rt -Force -ErrorAction SilentlyContinue }
 
     # Профили и проверяемый отчёт о надёжности (v5.1)
     foreach ($fn in 'Get-ProfileState', 'Export-OptimizerProfile', 'Import-OptimizerProfile',

@@ -218,10 +218,16 @@ function Update-Stats {
             $script:RustState.Text = 'не найден — запустите игру через Steam'
             $script:RustState.ForeColor = [RustSuite.Theme]::Warn
         } elseif ($script:RustRunning) {
-            $script:RustState.Text = 'запущен · приоритет High · бинды активны'
+            $rver = if ($script:RustInfo -and $script:RustInfo.Unity) { ' · Unity ' + $script:RustInfo.Unity } else { '' }
+            $script:RustState.Text = 'запущен · High' + $rver + ' · бинды активны'
             $script:RustState.ForeColor = [RustSuite.Theme]::Ok
         } else {
-            $script:RustState.Text = 'готов · cfg можно менять'
+            $rver = ''
+            if ($script:RustInfo -and $script:RustInfo.Unity) {
+                $rver = ' · Unity ' + $script:RustInfo.Unity
+                if ($script:RustInfo.CfgReady) { $rver += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            $script:RustState.Text = 'готов' + $rver
             $script:RustState.ForeColor = [RustSuite.Theme]::Muted
         }
     }
@@ -548,6 +554,7 @@ $form.Add_Shown({
                         Show-Group 'settings'
                         Apply-Theme 'MIDNIGHT' -Save
                         Update-ThemeSurfaces
+                        if (@($script:Themes).Count -lt 14) { throw 'THEME COUNT TOO LOW' }
                         Restart-SettingsSoon
                     }
                     8 {
@@ -629,13 +636,28 @@ $form.Add_Shown({
                         Update-Stats
                         $score = Get-OptimizationScore
                         if ($score -le 0) { throw 'HOME SCORE IS ZERO' }
+                        if ($script:RustExe -and (-not $script:RustInfo -or -not $script:RustInfo.Found -or -not $script:RustInfo.Version)) { throw 'RUST INFO MISSING' }
+                        Write-Host ('RUST info=' + $(if ($script:RustInfo) { $script:RustInfo.Version + ' Unity ' + $script:RustInfo.Unity + ' cfg=' + $script:RustInfo.CfgKeys } else { 'n/a' }))
                         Write-Host ('HOME score=' + $score + ' cards=' + $cards.Count +
                                     ' gauge=' + $script:HomeGauge.Width + 'x' + $script:HomeGauge.Height +
                                     ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
                         Write-Host 'HOME OK'
+                    }
+                    12 {
+                        try { $script:ProbeTimer.Stop() } catch {}
+                        Apply-Theme 'PURPLE RUSH' -Save
+                        Update-ThemeSurfaces
                         if ($env:RUSTOPT_SHOT) {
                             try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
                                 $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                while ($sw.ElapsedMilliseconds -lt 700) {
+                                    [System.Windows.Forms.Application]::DoEvents()
+                                    Start-Sleep -Milliseconds 15
+                                }
+                                $sw.Stop()
                                 $form.Refresh()
                                 $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
                                 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -645,10 +667,6 @@ $form.Add_Shown({
                                 $bmp.Dispose()
                             } catch {}
                         }
-                    }
-                    12 {
-                        Apply-Theme 'PURPLE RUSH' -Save
-                        Update-ThemeSurfaces
                         Write-Host 'UI TEST OK'
                         $script:ProbeTimer.Stop()
                         $script:Busy = $false

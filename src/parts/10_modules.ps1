@@ -509,8 +509,18 @@ function Invoke-RustGpu {
     if (-not $script:State.ContainsKey('RustGpuOld')) {
         $script:State['RustGpuOld'] = if ($null -eq $old) { '' } else { [string]$old }
     }
-    Set-RegStr $k $script:RustExe 'GpuPreference=2;'
-    Write-Log 'RustClient.exe → «Высокая производительность» GPU' 'ok'
+    $parts = @()
+    if ($old) {
+        foreach ($p in ([string]$old).Split(';')) {
+            $t = $p.Trim()
+            if (-not $t) { continue }
+            if ($t -match '^GpuPreference\s*=') { continue }
+            $parts += $t
+        }
+    }
+    $parts += 'GpuPreference=2'
+    Set-RegStr $k $script:RustExe (($parts -join ';') + ';')
+    Write-Log 'RustClient.exe → «Высокая производительность» GPU (прочие флаги сохранены)' 'ok'
 }
 
 function Undo-RustGpu {
@@ -575,7 +585,11 @@ function Invoke-RustCfg {
     $file = Join-Path $dir 'client.cfg'
     $null = Backup-FileOnce $file 'client.cfg'
     Backup-FileStamp $file 'client'
-    Merge-CfgFile -Path $file -Lines $script:RustCfgLines -ManagedKeys $script:RustCfgManaged
+    $sel = Select-RustCfgLines $script:RustCfgLines $file
+    Merge-CfgFile -Path $file -Lines $sel.Lines -ManagedKeys $script:RustCfgManaged
+    if ($sel.Skipped.Count -gt 0) {
+        Write-Log ('client.cfg: ключи, которых нет в этой версии Rust, пропущены — ' + (@($sel.Skipped) -join ', ')) 'info'
+    }
     Write-Log 'client.cfg: трава и пост-эффекты выключены (бэкап сохранён)' 'ok'
 }
 
@@ -756,7 +770,14 @@ $script:RustMaxCfgLines = @(
     'effects.otherplayerslightflares False',
     'effects.creationeffects False',
     'effects.maxgibs 0',
+    'effects.maxgibdist 0',
     'particle.quality 25',
+    'graphicssettings.pixellightcount 0',
+    'graphics.collapserenderers True',
+    'graphics.vsync 0',
+    'mesh.reducebonecountonlowlod True',
+    'sss.halfres True',
+    'sss.quality 0',
     'grass.quality 0',
     'grass.distance 0',
     'grass.displacement False',
@@ -789,7 +810,10 @@ $script:RustMaxCfgManaged = @(
     'effects.bloom','effects.lensdirt','effects.motionblur','effects.shafts',
     'effects.sharpen','effects.vignet','effects.hurtoverlay',
     'effects.otherplayerslightflares','effects.creationeffects','effects.maxgibs',
-    'particle.quality','grass.quality','grass.distance','grass.displacement',
+    'effects.maxgibdist','particle.quality','graphicssettings.pixellightcount',
+    'graphics.collapserenderers','graphics.vsync','mesh.reducebonecountonlowlod',
+    'sss.halfres','sss.quality',
+    'grass.quality','grass.distance','grass.displacement',
     'decor.quality','terrain.quality','tree.quality','tree.meshes','mesh.quality',
     'water.quality','water.reflections','sss.enabled','reflection.planarreflections',
     'legs.enablelegs','player.footik','ui.showinventoryplayer','fps.graph',
@@ -806,7 +830,11 @@ function Invoke-RustMaxCfg {
     $file = Join-Path $dir 'client.cfg'
     $null = Backup-FileOnce $file 'client.cfg-max'
     Backup-FileStamp $file 'client-max'
-    Merge-CfgFile -Path $file -Lines $script:RustMaxCfgLines -ManagedKeys $script:RustMaxCfgManaged
+    $sel = Select-RustCfgLines $script:RustMaxCfgLines $file
+    Merge-CfgFile -Path $file -Lines $sel.Lines -ManagedKeys $script:RustMaxCfgManaged
+    if ($sel.Skipped.Count -gt 0) {
+        Write-Log ('client.cfg: не поддерживаются этой версией Rust и пропущены — ' + (@($sel.Skipped) -join ', ')) 'info'
+    }
     Write-Log 'client.cfg: максимальная легальная оптимизация графики применена (бэкап сохранён)' 'ok'
 }
 function Undo-RustMaxCfg {
@@ -819,6 +847,50 @@ function Undo-RustMaxCfg {
     } else {
         Write-Log 'client.cfg: резервная копия не найдена' 'warn'
     }
+}
+
+# ============================================================
+#  RUST 2026: отчёт о совместимости клиента и cfg
+# ============================================================
+function Get-RustCompatText {
+    $info = Get-RustClientInfo
+    if (-not $info.Found) {
+        return "RUST не найден.`r`n`r`nУстановите игру в Steam и запустите её один раз — после этого появится cfg и станет доступна проверка совместимости."
+    }
+    $keys = @()
+    foreach ($l in @($script:RustMaxCfgLines)) {
+        if ($l -match '^\s*([A-Za-z0-9_.]+)') { $keys += $matches[1] }
+    }
+    $audit = Get-RustCfgAudit $keys
+    $lines = @()
+    $lines += 'RUST · СОВМЕСТИМОСТЬ С ТЕКУЩЕЙ ВЕРСИЕЙ'
+    $lines += ''
+    $lines += ('Клиент          : ' + $info.Version + '  (Unity ' + $info.Unity + ')')
+    $lines += ('Сборка          : ' + $info.Build + ' · обновлён ' + $info.Updated)
+    $lines += ('Размер          : ' + $info.SizeMb + ' МБ')
+    $lines += ('EasyAntiCheat   : ' + $(if ($info.Eac) { 'найден, не изменяется' } else { 'не найден в папке игры' }))
+    $lines += ('cfg             : ' + $info.CfgPath)
+    $lines += ('Ключей в cfg    : ' + $audit.Total)
+    $lines += ''
+    if (-not $audit.Ready) {
+        $lines += 'cfg ещё не создан игрой: запустите RUST один раз, выйдите и повторите проверку.'
+        $lines += 'До этого применяется только проверенный базовый набор конваров.'
+    } else {
+        $lines += ('Проверено ключей: ' + $audit.Ok.Count + ' из ' + $keys.Count)
+        if ($audit.Missing.Count -eq 0) {
+            $lines += 'Все конвары профиля поддерживаются этим клиентом.'
+        } else {
+            $lines += ('Не поддерживаются и будут пропущены: ' + ($audit.Missing -join ', '))
+        }
+        $lines += ''
+        $lines += 'Профиль применяется только к ключам, которые игра сама'
+        $lines += 'использует в client.cfg. Новые обновления Rust не ломают'
+        $lines += 'настройки: неизвестные ключи автоматически пропускаются.'
+    }
+    $lines += ''
+    $lines += 'Клиент не модифицируется: меняются только cfg-файлы,'
+    $lines += 'а exe/dll сверяются по снимку до и после.'
+    return ($lines -join "`r`n")
 }
 
 # ============================================================
@@ -1189,3 +1261,42 @@ function Invoke-StickyKeysOff {
     Write-Log 'Случайный вызов залипания/фильтрации клавиш отключён' 'ok'
 }
 function Undo-StickyKeysOff { Undo-StringBatch 'StickyKeysOld'; Write-Log 'Спец. возможности клавиатуры восстановлены' 'ok' }
+
+# 11. Windows 11: оптимизации для оконных игр (SwapEffectUpgrade)
+function Invoke-WindowedOpt {
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    Ensure-RegKey $k
+    $old = Get-Reg $k 'DirectXUserGlobalSettings'
+    if (-not $script:State.ContainsKey('WindowedOptOld')) {
+        $script:State['WindowedOptOld'] = if ($null -eq $old) { '~none~' } else { [string]$old }
+    }
+    $parts = @()
+    if ($old) {
+        foreach ($p in ([string]$old).Split(';')) {
+            $t = $p.Trim()
+            if (-not $t) { continue }
+            if ($t -match '^SwapEffectUpgradeEnable\s*=') { continue }
+            $parts += $t
+        }
+    }
+    $parts += 'SwapEffectUpgradeEnable=1'
+    Set-RegStr $k 'DirectXUserGlobalSettings' (($parts -join ';') + ';')
+    Write-Log 'Оптимизации оконных игр Windows 11 включены (SwapEffectUpgrade)' 'ok'
+}
+function Undo-WindowedOpt {
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    $old = [string]$script:State['WindowedOptOld']
+    if ($old -eq '~none~') { Remove-RegValue $k 'DirectXUserGlobalSettings' }
+    elseif ($old) { Set-RegStr $k 'DirectXUserGlobalSettings' $old }
+    Write-Log 'Настройка оконных игр восстановлена' 'ok'
+}
+
+# 12. Storage Sense: без фоновой автоочистки во время игры
+function Invoke-StorageSenseOff {
+    $items = @(
+        @{ P = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'; N = '01'; V = 0 }
+    )
+    Set-DwordBatch 'StorageSenseOld' $items
+    Write-Log 'Автоматическая очистка Storage Sense приостановлена' 'ok'
+}
+function Undo-StorageSenseOff { Undo-DwordBatch 'StorageSenseOld'; Write-Log 'Storage Sense восстановлен' 'ok' }

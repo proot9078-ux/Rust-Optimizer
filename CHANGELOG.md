@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.0 — 2026-11-05
+
+- **Адаптация под Rust 2026 / Unity 6.3**: `Get-RustClientInfo` определяет версию `RustClient.exe`, Unity, сборку, дату и наличие EasyAntiCheat. `Get-RustCfgKnownKeys`, `Select-RustCfgLines` и `Get-RustCfgAudit` читают `cfg\client.cfg` и пропускают конвары, которых нет в текущей версии игры; `Invoke-RustCfg` и `Invoke-RustMaxCfg` применяют только поддерживаемые ключи, `fps.graph` разрешён всегда. Если cfg ещё не создан, используется полный проверенный набор.
+- **Новые конвары**: `graphics.vsync`, `graphicssettings.pixellightcount`, `graphics.collapserenderers`, `mesh.reducebonecountonlowlod`, `sss.halfres`, `sss.quality`, `effects.maxgibdist`.
+- **Новые твики**: `windowedopt` (SwapEffectUpgrade для оконных игр Windows 11, сохраняет прочие значения `DirectXUserGlobalSettings`) и `storagesense` (пауза фоновой очистки диска). Итого **59** модулей.
+- **Две новые темы**: `UNITY 6` и `SOLAR FLARE`. Итого **14** тем.
+- **Страница «RUST»**: блок версии клиента/Unity/сборки/EAC/cfg и кнопка «ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG» с отчётом `Get-RustCompatText`.
+- **Плавность**: переход разделов проявляется снимком страницы (`FadeVeil`), прокрутка синхронизируется по событию через `RequestSync` (24-мс одноразовый таймер), шапка засыпает после ~20 с бездействия и просыпается от навигации/темы, карточки получили вертикальный градиент и верхний блик, `StatCard.SetHint` обновляет подпись без пересоздания.
+- **Бережнее к настройкам**: `Invoke-RustGpu` меняет только `GpuPreference`, сохраняя остальные флаги `UserGpuPreferences`; `Update-HomeLive` больше не сбрасывает значения при вызове без параметров.
+- **Отчёты и тесты**: версия клиента, Unity, сборка, EAC и cfg добавлены в `-Verify`; `-SelfTest` проверяет новые функции, адаптивную фильтрацию и `FadeVeil`; `-TestUi` проверяет версию клиента и 14 тем, снимок экрана снят в `C:\Temp\rustopt-home-60.png`.
+- **Документация**: README, docs/WHY.md и CHANGELOG обновлены под 6.0.
+
 ## 5.3 — 2026-11-04
 
 - **Публичная страница [docs/WHY.md](docs/WHY.md)** — почему PURPLE RUSH лучший открытый оптимизатор под RUST: шесть проверяемых критериев, отличия от закрытых твикеров, политика обновлений, инструкция «проверь сам за 3 минуты» и честные ограничения.

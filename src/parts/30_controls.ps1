@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -236,9 +237,17 @@ namespace RustSuite
             {
                 _target = value;
                 ScrollableControl sc = _target as ScrollableControl;
-                if (sc != null) { sc.Scroll += delegate { Invalidate(); }; }
+                if (sc != null)
+                {
+                    sc.Scroll += delegate { RequestSync(); };
+                    sc.Resize += delegate { RequestSync(); };
+                    sc.ClientSizeChanged += delegate { RequestSync(); };
+                    sc.VisibleChanged += delegate { RequestSync(); };
+                    sc.ControlAdded += delegate { RequestSync(); };
+                    sc.ControlRemoved += delegate { RequestSync(); };
+                }
                 Visible = false;
-                Sync();
+                RequestSync();
             }
         }
 
@@ -251,10 +260,17 @@ namespace RustSuite
             Cursor = Cursors.Hand;
             _arrowH = 16;
             try { Width = SystemInformation.VerticalScrollBarWidth; } catch { Width = 17; }
+            // Таймер не тикает постоянно: он запускается только после
+            // изменения прокрутки/размера и сразу останавливается.
             _t = new Timer();
-            _t.Interval = 70;
-            _t.Tick += delegate { Sync(); };
-            _t.Start();
+            _t.Interval = 24;
+            _t.Tick += delegate { _t.Stop(); Sync(); };
+        }
+
+        public void RequestSync()
+        {
+            if (IsDisposed || _t == null) return;
+            if (!_t.Enabled) _t.Start();
         }
 
         protected override void Dispose(bool disposing)
@@ -553,15 +569,102 @@ namespace RustSuite
         }
     }
 
+    // Плавное появление раздела: снимок новой страницы проявляется
+    // на фоне темы за несколько кадров. В отличие от прозрачной вуали,
+    // снимок не может скрыть содержимое под собой.
+    public class FadeVeil : Control, IAnim
+    {
+        private Bitmap _snap;
+        private int _alpha;
+        private int _step;
+
+        public FadeVeil()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
+            Visible = false;
+            Enabled = false;
+            TabStop = false;
+        }
+
+        public void Begin(Bitmap snap, int frames)
+        {
+            Cancel();
+            if (snap == null) return;
+            _snap = snap;
+            _alpha = 0;
+            _step = Math.Max(12, 255 / Math.Max(1, frames));
+            Visible = true;
+            try { BringToFront(); } catch { }
+            Anim.Add(this);
+            Invalidate();
+        }
+
+        public void Cancel()
+        {
+            try { Anim.Remove(this); } catch { }
+            if (_snap != null) { try { _snap.Dispose(); } catch { } _snap = null; }
+            _alpha = 0;
+            Visible = false;
+        }
+
+        public bool Tick()
+        {
+            if (_snap == null) { Visible = false; return false; }
+            _alpha += _step;
+            if (_alpha >= 255)
+            {
+                _alpha = 255;
+                Invalidate();
+                Bitmap b = _snap;
+                _snap = null;
+                Visible = false;
+                if (b != null) { try { b.Dispose(); } catch { } }
+                return false;
+            }
+            Invalidate();
+            return true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Theme.Bg);
+            if (_snap == null || _alpha <= 0) return;
+            ImageAttributes ia = new ImageAttributes();
+            try
+            {
+                ColorMatrix cm = new ColorMatrix();
+                cm.Matrix33 = _alpha / 255f;
+                ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                e.Graphics.DrawImage(_snap, new Rectangle(0, 0, Width, Height),
+                    0, 0, _snap.Width, _snap.Height, GraphicsUnit.Pixel, ia);
+            }
+            finally { ia.Dispose(); }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && _snap != null) { try { _snap.Dispose(); } catch { } _snap = null; }
+            base.Dispose(disposing);
+        }
+    }
+
     public class HeaderPanel : Panel, IAnim
     {
         private float _phase = 0.15f;
         private int _skip;
+        private int _idle;
         public HeaderPanel()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             BackColor = Theme.PanelBg;
+            Anim.Add(this);
+        }
+        public void Wake()
+        {
+            _idle = 0;
             Anim.Add(this);
         }
         public bool Tick()
@@ -571,6 +674,10 @@ namespace RustSuite
             _phase += 0.0114f;
             if (_phase > 1.35f) _phase = -0.25f;
             _skip++;
+            // После ~20 секунд без действий анимация засыпает и
+            // просыпается от навигации, смены темы или наведения.
+            _idle++;
+            if (_idle > 1200) return false;
             if (_skip < 3) return true;
             _skip = 0;
             Invalidate();
@@ -678,8 +785,14 @@ namespace RustSuite
             if (_p > 0.01f) line = Theme.Lerp(line, Color.FromArgb(120, Theme.Accent), _p);
             using (GraphicsPath p = Theme.Round(r, 9f))
             {
-                using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, p);
+                using (LinearGradientBrush b = new LinearGradientBrush(
+                    new Rectangle(0, 0, Math.Max(2, Width), Math.Max(2, Height)),
+                    Theme.Lerp(fill, Color.White, 0.035f), fill, LinearGradientMode.Vertical))
+                    g.FillPath(b, p);
                 using (Pen pen = new Pen(line, 1f)) g.DrawPath(pen, p);
+                // Тонкий блик по верхней кромке — карточка выглядит объёмнее.
+                using (Pen hi = new Pen(Color.FromArgb(26, 255, 255, 255), 1f))
+                    g.DrawLine(hi, 10, 1.5f, Math.Max(11, Width - 10), 1.5f);
             }
             if (_p > 0.02f)
             {
@@ -1247,6 +1360,14 @@ namespace RustSuite
             Value = v == null ? "" : v;
             _glow = 1f;
             Anim.Add(this);
+            Invalidate();
+        }
+
+        public void SetHint(string v)
+        {
+            string n = v == null ? "" : v;
+            if (Hint == n) return;
+            Hint = n;
             Invalidate();
         }
 

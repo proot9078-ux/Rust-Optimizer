@@ -497,6 +497,12 @@ $script:ContentScrollStrip = New-Object RustSuite.ScrollStrip
 $script:ContentScrollStrip.Target = $script:RowHost
 $contentWrap.Controls.Add($script:RowHost)
 $contentWrap.Controls.Add($script:ContentScrollStrip)
+
+# Вуаль плавного перехода между разделами.
+$script:FadeVeil = New-Object RustSuite.FadeVeil
+$script:FadeVeil.Dock = 'Fill'
+$contentWrap.Controls.Add($script:FadeVeil)
+try { $script:FadeVeil.BringToFront() } catch {}
 try {
     [RustSuite.WheelHub]::Target = $script:RowHost
     [void][System.Windows.Forms.Application]::AddMessageFilter((New-Object RustSuite.WheelRouter))
@@ -847,6 +853,33 @@ function Show-Group {
 
     if ($gid -eq 'rust') {
         $cw = $w
+        $ri = if ($script:RustInfo) { $script:RustInfo } else { Get-RustClientInfo }
+
+        $info = New-Object System.Windows.Forms.Label
+        if ($ri.Found) {
+            $cfgTxt = if ($ri.CfgReady) { [string]$ri.CfgKeys + ' ключей' } else { 'создастся после первого запуска' }
+            $eacTxt = if ($ri.Eac) { 'найден, не изменяется' } else { 'не найден' }
+            $info.Text = ('Клиент ' + $ri.Version + '  ·  Unity ' + $ri.Unity + '  ·  cfg: ' + $cfgTxt + "`r`n" +
+                          'Сборка ' + $ri.Build + ' от ' + $ri.Updated + '  ·  EAC: ' + $eacTxt)
+        } else {
+            $info.Text = 'RUST не найден. Установите игру в Steam и запустите её один раз — появится cfg и станет доступна проверка совместимости.'
+        }
+        $info.Font      = [RustSuite.Theme]::FSmall
+        $info.ForeColor = [RustSuite.Theme]::Muted
+        $info.BackColor = [System.Drawing.Color]::Transparent
+        $info.AutoSize  = $false
+        $info.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 38)
+        $script:RowHost.Controls.Add($info)
+
+        $btnCompat = New-Object RustSuite.FlatButton
+        $btnCompat.Style  = 'Ghost'
+        $btnCompat.Text   = '◈  ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG'
+        $btnCompat.Font   = [RustSuite.Theme]::FSmall
+        $btnCompat.Bounds = New-Object System.Drawing.Rectangle 0, ($y + (S 42)), $cw, (S 34)
+        $btnCompat.Add_Click({ Show-TextDialog 'RUST 2026' (Get-RustCompatText) })
+        $script:RowHost.Controls.Add($btnCompat)
+        $y += S 88
+
         $btnLaunch = New-Object RustSuite.FlatButton
         $btnLaunch.Style  = 'Primary'
         $btnLaunch.Text   = '▶  ЗАПУСТИТЬ RUST С ОПТИМИЗАЦИЕЙ'
@@ -897,6 +930,27 @@ function Show-Group {
         try { [RustSuite.Native]::SetRedraw($script:RowHost, $true) } catch {}
         try { $script:RowHost.Invalidate($true) } catch {}
         try { $script:RowHost.Update() } catch {}
+        try { if ($script:ContentScrollStrip) { $script:ContentScrollStrip.RequestSync() } } catch {}
+        try { if ($script:NavScrollStrip) { $script:NavScrollStrip.RequestSync() } } catch {}
+        try { if ($script:Header) { $script:Header.Wake() } } catch {}
+        try {
+            if ($script:FadeVeil -and -not $script:FadeVeil.IsDisposed) {
+                $snap = $null
+                try {
+                    $rw = [int]$script:RowHost.ClientSize.Width
+                    $rh = [int]$script:RowHost.ClientSize.Height
+                    if ($rw -gt 4 -and $rh -gt 4) {
+                        $snap = New-Object System.Drawing.Bitmap $rw, $rh
+                        $rect = New-Object System.Drawing.Rectangle 0, 0, $rw, $rh
+                        $script:RowHost.DrawToBitmap($snap, $rect)
+                    }
+                } catch {
+                    if ($snap) { try { $snap.Dispose() } catch {} }
+                    $snap = $null
+                }
+                $script:FadeVeil.Begin($snap, 7)
+            }
+        } catch {}
     }
 }
 

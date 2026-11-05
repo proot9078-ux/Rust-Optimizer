@@ -104,16 +104,11 @@ function Update-HomeLive {
             if ($Cpu -ge 0) {
                 $script:HomeCpuVal.Text = ('CPU  {0}%' -f $Cpu)
                 $script:HomeCpuVal.ForeColor = if ($Cpu -ge 85) { [RustSuite.Theme]::Warn } else { [RustSuite.Theme]::TextC }
-            } else {
-                $script:HomeCpuVal.Text = 'CPU  —'
-                $script:HomeCpuVal.ForeColor = [RustSuite.Theme]::Muted
             }
         }
         if ($script:HomeRamVal -and -not $script:HomeRamVal.IsDisposed) {
             if ($Ram -ge 0) {
                 $script:HomeRamVal.Text = ('ОЗУ  {0}%   ·   диск свободно {1:N1} ГБ ({2:N0}%)' -f $Ram, $DiskFreeGb, $DiskFreePct)
-            } else {
-                $script:HomeRamVal.Text = 'ОЗУ  —'
             }
         }
 
@@ -123,15 +118,17 @@ function Update-HomeLive {
                 $mc.SetValue(('{0} / {1}' -f $st.On, $st.Total))
             }
             $dc = $script:HomeCards['disk']
-            if ($dc -and -not $dc.IsDisposed) {
-                if ($DiskFreeGb -gt 0) { $dc.SetValue(('{0:N1} ГБ' -f $DiskFreeGb)) }
-                else { $dc.SetValue('н/д') }
+            if ($dc -and -not $dc.IsDisposed -and $DiskFreeGb -gt 0) {
+                $dc.SetValue(('{0:N1} ГБ' -f $DiskFreeGb))
             }
             $rc = $script:HomeCards['rust']
             if ($rc -and -not $rc.IsDisposed) {
                 if ($script:RustExe) {
                     if ($script:RustRunning) { $rc.SetValue('ЗАПУЩЕН') }
                     else { $rc.SetValue('НАЙДЕН') }
+                    if ($script:RustInfo -and $script:RustInfo.Unity) {
+                        $rc.SetHint('Unity ' + $script:RustInfo.Unity)
+                    }
                 } else { $rc.SetValue('НЕ НАЙДЕН') }
             }
         }
@@ -139,7 +136,12 @@ function Update-HomeLive {
         if ($script:HomeStatusLbl -and -not $script:HomeStatusLbl.IsDisposed) {
             $applied = @(Get-AppliedTweaks).Count
             $adm = if ($script:IsAdmin) { 'администратор' } else { 'без прав администратора' }
-            $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}' -f $applied, $adm, $script:ThemeName)
+            $rv = ''
+            if ($script:RustInfo -and $script:RustInfo.Found -and $script:RustInfo.Unity) {
+                $rv = '   ·   RUST ' + $script:RustInfo.Unity
+                if ($script:RustInfo.CfgReady) { $rv += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}{3}' -f $applied, $adm, $script:ThemeName, $rv)
         }
     } catch {}
 }
@@ -270,7 +272,7 @@ function Show-HomePanel {
     $cards = @(
         @{ Key = 'modules'; Label = 'МОДУЛИ'; Value = ('{0} / {1}' -f $st.On, $st.Total); Hint = 'включено сейчас';  Accent = [RustSuite.Theme]::Accent },
         @{ Key = 'disk';    Label = 'СВОБОДНО'; Value = '—'; Hint = 'на системном диске'; Accent = [RustSuite.Theme]::Secondary },
-        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
+        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
     )
     $ci = 0
     foreach ($cd in $cards) {

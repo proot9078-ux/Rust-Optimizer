@@ -208,6 +208,15 @@ function Get-TrustReportText {
     [void]$sb.AppendLine(('Состояние          : ' + $(if (Test-Path -LiteralPath $script:StateFile) { 'state.xml на месте' } else { 'будет создан при первом сохранении' })))
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('ЦЕЛОСТНОСТЬ КЛИЕНТА ИГРЫ')
+    $ri = if ($script:RustInfo) { $script:RustInfo } else { Get-RustClientInfo }
+    if ($ri.Found) {
+        [void]$sb.AppendLine(('  Клиент            : ' + $ri.Version + '  (Unity ' + $ri.Unity + ')'))
+        [void]$sb.AppendLine(('  Сборка            : ' + $ri.Build + ' · обновлён ' + $ri.Updated))
+        [void]$sb.AppendLine(('  EasyAntiCheat     : ' + $(if ($ri.Eac) { 'найден, не изменяется' } else { 'не найден' })))
+        [void]$sb.AppendLine(('  cfg               : ' + $(if ($ri.CfgReady) { 'ключей ' + $ri.CfgKeys + ' — профиль подстраивается автоматически' } else { 'ещё не создан игрой — базовый набор' })))
+    } else {
+        [void]$sb.AppendLine('  Клиент            : RUST не найден в библиотеках Steam')
+    }
     foreach ($line in ((Get-ClientGuardText) -split "`r?`n")) { [void]$sb.AppendLine('  ' + $line) }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('СТАТИЧЕСКИЙ АУДИТ ИСХОДНИКА')

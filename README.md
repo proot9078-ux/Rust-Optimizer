@@ -11,7 +11,7 @@
 
 Открытый оптимизатор Windows под игру **RUST** с глубокой очисткой, диагностикой и восстановлением системы. Полностью читаемый исходный код, без обфускации, скрытых бинарников и «магических» твиков.
 
-> **Версия 5.3** · 57 модулей · 12 анимированных тем · плавный интерфейс без холостых анимаций · проверка целостности клиента RUST · атомарное состояние · профили в JSON · предпросмотр плана · отчёт о надёжности `-Verify`.
+> **Версия 6.0** · 59 модулей · 14 анимированных тем · адаптация под Rust 2026 (Unity 6.3) · автоподстройка cfg под текущий клиент · плавные переходы разделов · проверка целостности клиента RUST · атомарное состояние · профили в JSON · отчёт о надёжности `-Verify`.
 
 ---
 
@@ -34,7 +34,18 @@
 
 ---
 
-## Что нового в 5.3
+## Что нового в 6.0
+
+- **Адаптация под Rust 2026 / Unity 6.3** — программа определяет установленный клиент (`RustClient.exe`, Unity `6000.3.x`, сборка и дата), читает его `cfg\client.cfg` и применяет только те конвары, которые эта версия игры реально использует. Неизвестные ключи пропускаются и пишутся в журнал, поэтому обновление Rust больше не ломает настройки.
+- **Проверка совместимости cfg** — на странице **«RUST»** появился блок с версией клиента, Unity, сборкой, датой обновления, EasyAntiCheat и числом ключей, а кнопка **«ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG»** показывает полный отчёт. Те же строки добавлены в отчёт о надёжности `-Verify`.
+- **Новые актуальные конвары** — `graphics.vsync 0`, `graphicssettings.pixellightcount 0`, `graphics.collapserenderers True`, `mesh.reducebonecountonlowlod True`, `sss.halfres True`, `sss.quality 0`, `effects.maxgibdist 0`: меньше лишних вызовов рендера без правки клиента и шейдеров.
+- **Два новых безопасных твика** — оптимизации оконных игр Windows 11 (`SwapEffectUpgrade`) и пауза фоновой очистки Storage Sense во время игры. Всего модулей: **59**.
+- **Две новые темы** — `UNITY 6` (холодный графит с голубым акцентом) и `SOLAR FLARE` (тёплый янтарь). Всего тем: **14**.
+- **Плавнее интерфейс** — переход между разделами проявляется мягким снимком страницы; полосы прокрутки синхронизируются только по событию, а не 14 раз в секунду; шапка засыпает после бездействия; карточки получили градиент и блик по верхней кромке.
+- **Бережнее к чужим настройкам** — `GpuPreference=2` для Rust больше не затирает остальные флаги `UserGpuPreferences`, а откат возвращает исходную строку целиком.
+- **Больше самопроверок** — `-SelfTest` проверяет новые функции, адаптивную фильтрацию конваров (включая `fps.graph` и запасной полный набор), `-TestUi` — версию клиента и 14 тем.
+
+## Что было в 5.3
 
 - **Публичная страница «Почему это лучший открытый оптимизатор»** — [docs/WHY.md](docs/WHY.md): шесть проверяемых критериев, отличия от закрытых твикеров, политика обновлений и инструкция «проверь сам за 3 минуты».
 - **Понятное сравнение в README** — таблица «PURPLE RUSH / типичный закрытый твикер» без голословных обещаний: каждый пункт проверяется исходником и `-Verify`.
@@ -259,13 +270,13 @@ src/
     16_repair.ps1       SFC/DISM/CHKDSK/WMI и восстановление
     18_diagnostics.ps1  проверки здоровья Windows и быстрые исправления
     19_picture.ps1      пресеты картинки, гамма, панель GPU
-    20_tweaks.ps1       список 57 модулей, Start-Optimization / Start-Rollback
+    20_tweaks.ps1       список 59 модулей, Start-Optimization / Start-Rollback
     30_controls.ps1     темы и анимированные контролы (C#)
     32_profiles.ps1     экспорт/импорт профилей в JSON
     33_trust.ps1        отчёт о надёжности, защита клиента, предпросмотр плана
     34_dashboard.ps1    стартовая панель «ОБЗОР», оценка профиля
     35_selftest.ps1     самопроверка
-    39_settings.ps1     12 тем, отчёт о системе, мониторинг
+    39_settings.ps1     14 тем, отчёт о системе, мониторинг
     40_ui.ps1           окно, навигация, карточки, бинды
     45_repair_ui.ps1    страница «РЕМОНТ И ДИАГНОСТИКА»
     46_picture_ui.ps1   страница «КАРТИНКА»
@@ -285,11 +296,11 @@ dist/                   одиночный .bat (создаётся при сб�
 
 | Группа | Модулей | Назначение |
 |---|---:|---|
-| Система | 27 | питание, приоритеты, службы, телеметрия, FSE, Xbox, быстрый запуск, Game Bar, поиск, прозрачность, AutoPlay |
+| Система | 29 | питание, приоритеты, службы, телеметрия, FSE, Xbox, быстрый запуск, Game Bar, поиск, прозрачность, AutoPlay, окна Windows 11, Storage Sense |
 | Сеть | 5 | Nagle, TCP, QoS, DNS, энергосбережение адаптера |
 | RUST | 6 | cfg, приоритет, affinity, GPU, запуск, страница «КАРТИНКА» |
 | Очистка | 19 | TEMP, кэши, дампы, Steam/RUST, WinSxS, журналы, виджеты, Copilot, Recall, рекомендации, фоновые приложения |
-| **Всего** | **57** | + официальные бинды `keys.cfg` |
+| **Всего** | **59** | + официальные бинды `keys.cfg` |
 
 ## Безопасность и EAC
 
@@ -311,6 +322,7 @@ dist/                   одиночный .bat (создаётся при сб�
 - Некоторые операции (сброс сети, пересборка иконок, очистка WinSxS) требуют перезагрузки или перезапуска Explorer.
 - Гамма-пресеты действуют на основной монитор и могут сбрасываться после перезагрузки, смены разрешения или выхода из полноэкранной игры. Постоянный цвет настраивается в панели NVIDIA/AMD.
 - Значения реестра и служб могут отличаться на разных сборках Windows; откат возвращает сохранённые исходные значения там, где это предусмотрено.
+- Набор конваров подстраивается под `cfg\client.cfg` установленной версии Rust. Если игра ещё ни разу не запускалась и файл не создан, применяется проверенный базовый набор; после первого запуска кнопка «ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG» покажет точный список поддерживаемых ключей.
 
 ## Политика обновлений
 
@@ -325,7 +337,7 @@ dist/                   одиночный .bat (создаётся при сб�
 
 ## Why PURPLE RUSH (short English)
 
-PURPLE RUSH is an open-source Windows optimizer for **RUST**, written in readable Windows PowerShell 5.1 with a WinForms UI. It never modifies `RustClient.exe` or game DLLs, never touches process memory, never installs overlays (ReShade/Freestyle), and never downloads binaries. It only changes Windows settings, official `cfg\client.cfg` / `cfg\keys.cfg`, and documented driver-panel options.
+PURPLE RUSH is an open-source Windows optimizer for **RUST**, written in readable Windows PowerShell 5.1 with a WinForms UI. Version 6.0 detects the installed Rust 2026 / Unity 6.3 client, reads its `cfg\client.cfg` and applies only convar keys that this game build actually uses — unknown keys are skipped instead of breaking after an update. It never modifies `RustClient.exe` or game DLLs, never touches process memory, never installs overlays (ReShade/Freestyle), and never downloads binaries. It only changes Windows settings, official `cfg\client.cfg` / `cfg\keys.cfg`, and documented driver-panel options.
 
 Every change is reversible: restore point, registry/cfg backups, applied-module journal, one-click rollback and JSON profiles. Before and after optimization the app snapshots game-client metadata and proves the client is unchanged. `-Verify` prints the source SHA256 and a static audit (network downloads, injection, dynamic code, client modification) that must be **zero**; `-SelfTest` and `-TestUi` validate logic and UI.
 
