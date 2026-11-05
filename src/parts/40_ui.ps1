@@ -837,6 +837,8 @@ function Show-Group {
         $card.Sub    = [string]$t.Desc
         $card.Risk   = [bool]$t.Risk
         $card.Tag    = $t
+        $card.ListTotal = $items.Count
+        $card.ListIndex = $idx + 1
         $card.On     = [bool]$script:Enabled[$t.Id]
         $card.Add_Toggled({
             param($s, $e)

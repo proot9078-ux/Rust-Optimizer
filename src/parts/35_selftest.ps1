@@ -42,6 +42,14 @@ if ($SelfTest) {
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
     }
 
+    # Карточки модулей умеют рисовать полоску позиции в списке
+    try {
+        $ct = [RustSuite.Card]
+        if (-not $ct.GetProperty('ListIndex') -or -not $ct.GetProperty('ListTotal')) {
+            Write-Host 'CARD LIST PROGRESS PROPERTIES MISSING'; $fail++
+        }
+    } catch { Write-Host 'CARD LIST PROGRESS CHECK ERROR'; $fail++ }
+
     # Ярлык и иконка
     foreach ($fn in 'Get-AppLauncherPath', 'Get-AppIconPath', 'Install-AppShortcut', 'Set-AppWindowIcon') {
         if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {

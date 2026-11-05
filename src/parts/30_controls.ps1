@@ -723,10 +723,31 @@ namespace RustSuite
     {
         private bool _on, _hover;
         private float _p, _ha;
+        private float _prog, _progTarget;
+        private int _listIndex, _listTotal;
         public string Title = "";
         public string Sub = "";
         public bool Risk;
         public event EventHandler Toggled;
+
+        public int ListIndex
+        {
+            get { return _listIndex; }
+            set { _listIndex = value; UpdateProgress(); }
+        }
+
+        public int ListTotal
+        {
+            get { return _listTotal; }
+            set { _listTotal = value; UpdateProgress(); }
+        }
+
+        private void UpdateProgress()
+        {
+            _progTarget = _listTotal > 0 ? Math.Min(1f, Math.Max(0f, (float)_listIndex / _listTotal)) : 0f;
+            Anim.Add(this);
+            Invalidate();
+        }
 
         public bool On
         {
@@ -771,8 +792,9 @@ namespace RustSuite
             float th = _hover ? 1f : 0f;
             _p = Ease.Approach(_p, tp, 0.22f);
             _ha = Ease.Approach(_ha, th, 0.25f);
+            _prog = Ease.Approach(_prog, _progTarget, 0.14f);
             Invalidate();
-            return !(Ease.Done(_p, tp) && Ease.Done(_ha, th));
+            return !(Ease.Done(_p, tp) && Ease.Done(_ha, th) && Ease.Done(_prog, _progTarget));
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -824,6 +846,31 @@ namespace RustSuite
                 float kx = tx + 3.5f + (tww - d - 7f) * _p;
                 using (SolidBrush b = new SolidBrush(Theme.Lerp(Color.FromArgb(140, 151, 166), Color.White, _p)))
                     g.FillEllipse(b, kx, ty + 3.5f, d, d);
+            }
+
+            // Тонкая полоска листания внизу карточки: показывает, где модуль
+            // находится в списке раздела. Заполнение плавно доезжает до цели.
+            if (_listTotal > 1 && Width > 80)
+            {
+                float sx = 16f;
+                float sw = Width - 32f;
+                float sy = Height - 6f;
+                if (sw > 8f)
+                {
+                    using (GraphicsPath bp = Theme.Round(new RectangleF(sx, sy, sw, 2f), 1f))
+                    using (SolidBrush bb = new SolidBrush(Color.FromArgb(34, Theme.TextC)))
+                        g.FillPath(bb, bp);
+                    float fw = sw * _prog;
+                    if (fw > 0.5f)
+                    {
+                        if (fw < 2f) fw = 2f;
+                        using (GraphicsPath fp = Theme.Round(new RectangleF(sx, sy, fw, 2f), 1f))
+                        using (LinearGradientBrush fb = new LinearGradientBrush(
+                            new RectangleF(sx, sy, Math.Max(2.1f, fw), 2f),
+                            Theme.Accent, Theme.Secondary, LinearGradientMode.Horizontal))
+                            g.FillPath(fb, fp);
+                    }
+                }
             }
         }
     }

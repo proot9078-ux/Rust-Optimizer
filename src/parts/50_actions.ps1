@@ -529,6 +529,7 @@ $form.Add_Shown({
         $script:ProbeTimer = New-Object System.Windows.Forms.Timer
         $script:ProbeTimer.Interval = 450
         $script:ProbeTimer.Add_Tick({
+            if ($script:ProbeBusy) { return }
             if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
@@ -562,6 +563,32 @@ $form.Add_Shown({
                         $c = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] }) | Select-Object -First 1
                         if ($c) { $c.On = (-not $c.On); $c.On = (-not $c.On) }
                         Update-Stats
+                        if ($c -and ([int]$c.ListTotal -ne @($script:Tweaks | Where-Object { $_.Group -eq 'sys' }).Count)) {
+                            throw 'CARD LIST TOTAL WRONG'
+                        }
+                        if ($env:RUSTOPT_SHOT_SYS) {
+                            try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
+                                $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $script:ProbeBusy = $true
+                                try {
+                                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                    while ($sw.ElapsedMilliseconds -lt 420) {
+                                        [System.Windows.Forms.Application]::DoEvents()
+                                        Start-Sleep -Milliseconds 15
+                                    }
+                                    $sw.Stop()
+                                } finally { $script:ProbeBusy = $false }
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT_SYS, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
                     }
                     9 {
                         Show-Group 'repair'

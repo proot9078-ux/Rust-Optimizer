@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '6.0'
+$script:AppVersion   = '6.1'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -4659,10 +4659,31 @@ namespace RustSuite
     {
         private bool _on, _hover;
         private float _p, _ha;
+        private float _prog, _progTarget;
+        private int _listIndex, _listTotal;
         public string Title = "";
         public string Sub = "";
         public bool Risk;
         public event EventHandler Toggled;
+
+        public int ListIndex
+        {
+            get { return _listIndex; }
+            set { _listIndex = value; UpdateProgress(); }
+        }
+
+        public int ListTotal
+        {
+            get { return _listTotal; }
+            set { _listTotal = value; UpdateProgress(); }
+        }
+
+        private void UpdateProgress()
+        {
+            _progTarget = _listTotal > 0 ? Math.Min(1f, Math.Max(0f, (float)_listIndex / _listTotal)) : 0f;
+            Anim.Add(this);
+            Invalidate();
+        }
 
         public bool On
         {
@@ -4707,8 +4728,9 @@ namespace RustSuite
             float th = _hover ? 1f : 0f;
             _p = Ease.Approach(_p, tp, 0.22f);
             _ha = Ease.Approach(_ha, th, 0.25f);
+            _prog = Ease.Approach(_prog, _progTarget, 0.14f);
             Invalidate();
-            return !(Ease.Done(_p, tp) && Ease.Done(_ha, th));
+            return !(Ease.Done(_p, tp) && Ease.Done(_ha, th) && Ease.Done(_prog, _progTarget));
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -4760,6 +4782,31 @@ namespace RustSuite
                 float kx = tx + 3.5f + (tww - d - 7f) * _p;
                 using (SolidBrush b = new SolidBrush(Theme.Lerp(Color.FromArgb(140, 151, 166), Color.White, _p)))
                     g.FillEllipse(b, kx, ty + 3.5f, d, d);
+            }
+
+            // Тонкая полоска листания внизу карточки: показывает, где модуль
+            // находится в списке раздела. Заполнение плавно доезжает до цели.
+            if (_listTotal > 1 && Width > 80)
+            {
+                float sx = 16f;
+                float sw = Width - 32f;
+                float sy = Height - 6f;
+                if (sw > 8f)
+                {
+                    using (GraphicsPath bp = Theme.Round(new RectangleF(sx, sy, sw, 2f), 1f))
+                    using (SolidBrush bb = new SolidBrush(Color.FromArgb(34, Theme.TextC)))
+                        g.FillPath(bb, bp);
+                    float fw = sw * _prog;
+                    if (fw > 0.5f)
+                    {
+                        if (fw < 2f) fw = 2f;
+                        using (GraphicsPath fp = Theme.Round(new RectangleF(sx, sy, fw, 2f), 1f))
+                        using (LinearGradientBrush fb = new LinearGradientBrush(
+                            new RectangleF(sx, sy, Math.Max(2.1f, fw), 2f),
+                            Theme.Accent, Theme.Secondary, LinearGradientMode.Horizontal))
+                            g.FillPath(fb, fp);
+                    }
+                }
             }
         }
     }
@@ -6618,6 +6665,14 @@ if ($SelfTest) {
             }
         } catch { Write-Host ("CONTROL ERROR: " + $tn); $fail++ }
     }
+
+    # Карточки модулей умеют рисовать полоску позиции в списке
+    try {
+        $ct = [RustSuite.Card]
+        if (-not $ct.GetProperty('ListIndex') -or -not $ct.GetProperty('ListTotal')) {
+            Write-Host 'CARD LIST PROGRESS PROPERTIES MISSING'; $fail++
+        }
+    } catch { Write-Host 'CARD LIST PROGRESS CHECK ERROR'; $fail++ }
 
     # Ярлык и иконка
     foreach ($fn in 'Get-AppLauncherPath', 'Get-AppIconPath', 'Install-AppShortcut', 'Set-AppWindowIcon') {
@@ -8587,6 +8642,8 @@ function Show-Group {
         $card.Sub    = [string]$t.Desc
         $card.Risk   = [bool]$t.Risk
         $card.Tag    = $t
+        $card.ListTotal = $items.Count
+        $card.ListIndex = $idx + 1
         $card.On     = [bool]$script:Enabled[$t.Id]
         $card.Add_Toggled({
             param($s, $e)
@@ -10261,6 +10318,7 @@ $form.Add_Shown({
         $script:ProbeTimer = New-Object System.Windows.Forms.Timer
         $script:ProbeTimer.Interval = 450
         $script:ProbeTimer.Add_Tick({
+            if ($script:ProbeBusy) { return }
             if ($script:ProbeHold) { return }
             try {
                 switch ($script:ProbeStep) {
@@ -10294,6 +10352,32 @@ $form.Add_Shown({
                         $c = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] }) | Select-Object -First 1
                         if ($c) { $c.On = (-not $c.On); $c.On = (-not $c.On) }
                         Update-Stats
+                        if ($c -and ([int]$c.ListTotal -ne @($script:Tweaks | Where-Object { $_.Group -eq 'sys' }).Count)) {
+                            throw 'CARD LIST TOTAL WRONG'
+                        }
+                        if ($env:RUSTOPT_SHOT_SYS) {
+                            try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
+                                $script:RowHost.ScrollToTop()
+                                $form.Refresh()
+                                $script:ProbeBusy = $true
+                                try {
+                                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                    while ($sw.ElapsedMilliseconds -lt 420) {
+                                        [System.Windows.Forms.Application]::DoEvents()
+                                        Start-Sleep -Milliseconds 15
+                                    }
+                                    $sw.Stop()
+                                } finally { $script:ProbeBusy = $false }
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT_SYS, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
                     }
                     9 {
                         Show-Group 'repair'
