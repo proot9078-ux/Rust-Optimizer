@@ -10,6 +10,8 @@ function Get-PictureStatusText {
              else { 'цвет: только панель драйвера' }
     $rv = [string]$script:State['RustVisualPreset']
     $cfg = if ($rv) { 'client.cfg: ' + (Get-LookPresetName $rv) } else { 'client.cfg: без изменений' }
+    $pend = [string]$script:State['RustVisualPending']
+    if ($pend) { $cfg = 'client.cfg: ' + (Get-LookPresetName $pend) + ' (запишется после закрытия Rust)' }
     return ($color + '   ·   ' + $cfg)
 }
 
@@ -19,6 +21,26 @@ function Update-PictureStatusLabel {
             $script:PictureStatusLabel.Text = Get-PictureStatusText
         }
     } catch {}
+}
+
+# Выбор плитки: подсветка, описание, состояние. Само применение —
+# отдельно (двойной клик), чтобы одиночный клик оставался безопасным.
+function Select-LookPreset {
+    param([string]$Key)
+    if (-not $Key) { return }
+    $script:LookPreset = $Key
+    foreach ($t in @($script:PictureTiles)) {
+        try { if ($t -and -not $t.IsDisposed) { $t.Selected = ([string]$t.Tag -eq $Key) } } catch {}
+    }
+    try { if ($script:PicturePreviewAfter -and -not $script:PicturePreviewAfter.IsDisposed) { $script:PicturePreviewAfter.Invalidate() } } catch {}
+    try {
+        if ($script:PictureDescLabel -and -not $script:PictureDescLabel.IsDisposed) {
+            $script:PictureDescLabel.Text = [string](Get-LookPreset $Key).Desc
+        }
+    } catch {}
+    $script:State['LookPreset'] = $Key
+    Save-State
+    Update-PictureStatusLabel
 }
 
 function New-LookPreview {
@@ -282,7 +304,7 @@ function Show-PicturePanel {
 
     # ---------- Пресеты ----------
     $lblPresets = New-Object System.Windows.Forms.Label
-    $lblPresets.Text      = 'ПРЕСЕТЫ КАРТИНКИ · нажмите, чтобы выбрать'
+    $lblPresets.Text      = 'ПРЕСЕТЫ КАРТИНКИ · двойной клик — применить сразу'
     $lblPresets.Font      = [RustSuite.Theme]::FHead
     $lblPresets.ForeColor = [RustSuite.Theme]::Muted
     $lblPresets.BackColor = [System.Drawing.Color]::Transparent
@@ -319,19 +341,15 @@ function Show-PicturePanel {
         $tile.Add_Click({
             param($s, $e)
             $key = [string]$s.Tag
-            $script:LookPreset = $key
-            foreach ($t in @($script:PictureTiles)) {
-                try { if ($t -and -not $t.IsDisposed) { $t.Selected = ([string]$t.Tag -eq $key) } } catch {}
-            }
-            try { if ($script:PicturePreviewAfter -and -not $script:PicturePreviewAfter.IsDisposed) { $script:PicturePreviewAfter.Invalidate() } } catch {}
-            try {
-                if ($script:PictureDescLabel -and -not $script:PictureDescLabel.IsDisposed) {
-                    $script:PictureDescLabel.Text = [string](Get-LookPreset $key).Desc
-                }
-            } catch {}
-            $script:State['LookPreset'] = $key
-            Save-State
-            Set-Status ('Пресет картинки: ' + (Get-LookPresetName $key)) '#8B949E'
+            Select-LookPreset $key
+            Set-Status ('Пресет картинки: ' + (Get-LookPresetName $key) + ' — двойной клик, чтобы применить') '#8B949E'
+        })
+        $tile.Add_DoubleClick({
+            param($s, $e)
+            $key = [string]$s.Tag
+            Select-LookPreset $key
+            $r = Enable-LookPreset $key
+            Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
             Update-PictureStatusLabel
         })
         $script:PictureTiles += $tile
@@ -395,8 +413,10 @@ function Show-PicturePanel {
     $y += S 46
 
     $gammaNote = New-Object System.Windows.Forms.Label
-    $gammaNote.Text      = 'Гамма действует на основной монитор и сбрасывается после перезагрузки Windows. ' +
-                           'В полноэкранной игре драйвер может вернуть свою таблицу — тогда используйте панель NVIDIA/AMD.'
+    $gammaNote.Text      = 'Двойной клик по плитке применяет пресет сразу: гамма Windows + официальные конвары. ' +
+                           'Если Rust открыт, client.cfg запишется автоматически после выхода из игры. ' +
+                           'Цвет восстанавливается при запуске программы и возвращается, ' +
+                           'если драйвер сбросил его в полноэкранном режиме.'
     $gammaNote.Font      = [RustSuite.Theme]::FSmall
     $gammaNote.ForeColor = [RustSuite.Theme]::Muted
     $gammaNote.BackColor = [System.Drawing.Color]::Transparent

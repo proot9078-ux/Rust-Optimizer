@@ -131,6 +131,15 @@ function Start-DeepCleanFromUi {
 }
 
 function Update-Stats {
+    # Раз в ~30 секунд возвращаем пресет цвета, если драйвер его сбросил.
+    $script:LookGuard = [int]$script:LookGuard + 1
+    if ($script:LookGuard -ge 12) {
+        $script:LookGuard = 0
+        if (-not $script:TestUi) {
+            try { [void](Test-LookDrift) } catch {}
+            try { [void](Update-PendingVisualCfg) } catch {}
+        }
+    }
     $cpu = -1
     $ram = -1
     try {
@@ -500,6 +509,12 @@ $form.Add_Shown({
     Show-Group 'home'
     Update-Stats
 
+    if (-not $script:TestUi) {
+        try { [void](Restore-LookOnStartup) } catch {}
+        try { [void](Update-PendingVisualCfg) } catch {}
+        try { Update-PictureStatusLabel } catch {}
+    }
+
     Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
     Write-Log ('Права администратора: ' + $(if ($script:IsAdmin) { 'да' } else { 'НЕТ — часть функций не сработает' })) $(if ($script:IsAdmin) { 'info' } else { 'warn' })
     Write-Log ('Steam: ' + $(if ($script:SteamPath) { $script:SteamPath } else { 'не найден' })) 'info'
@@ -612,6 +627,16 @@ $form.Add_Shown({
                         if ([int]$script:PreviewPaints -lt 1) { throw 'PICTURE PREVIEW NOT PAINTED' }
                         if ($script:PictureStatusLabel -and $script:PictureStatusLabel.Text.Length -lt 3) {
                             throw 'PICTURE STATUS MISSING'
+                        }
+                        # Одиночный клик выбирает пресет и сохраняет его в состоянии;
+                        # применение остаётся за двойным кликом.
+                        $firstTile = $tiles | Select-Object -First 1
+                        if ($firstTile) {
+                            $tkey = [string]$firstTile.Tag
+                            Select-LookPreset $tkey
+                            if (-not $firstTile.Selected) { throw 'PICTURE TILE SELECT FAILED' }
+                            if ([string]$script:State['LookPreset'] -ne $tkey) { throw 'PICTURE PRESET NOT PERSISTED' }
+                            Update-PictureStatusLabel
                         }
                         try { $script:RowHost.PerformLayout() } catch {}
                         try { $script:ContentScrollStrip.Sync() } catch {}

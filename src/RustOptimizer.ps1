@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '6.1'
+$script:AppVersion   = '6.2'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -2933,6 +2933,7 @@ $script:GpuInfo      = $null
 $script:GpuInfoAt    = [datetime]::MinValue
 $script:LookPreset   = 'vivid'
 $script:LookTiles    = @{}
+$script:LookGuard    = 0
 $script:GammaDir     = Join-Path $script:Root 'gamma'
 try { New-Item -ItemType Directory -Force -Path $script:GammaDir | Out-Null } catch {}
 
@@ -3118,6 +3119,86 @@ function Restore-LookGamma {
     return [pscustomobject]@{ Ok = $true; Message = 'Исходный цвет восстановлен.' }
 }
 
+# Применить пресет целиком: цвет Windows + официальные конвары client.cfg.
+# Используется двойным кликом по плитке на странице «КАРТИНКА».
+function Enable-LookPreset {
+    param([string]$Key)
+    $p = Get-LookPreset $Key
+    $gamma = Apply-LookPreset $p.Key
+    $cfg = Set-RustVisualCfg $p.Key
+    $pending = $false
+    if (-not $cfg.Ok) {
+        $running = $false
+        try { $running = Test-RustRunning } catch {}
+        if ($running) {
+            # Игра перезапишет client.cfg при выходе, поэтому запись
+            # откладывается до закрытия Rust и повторяется автоматически.
+            $script:State['RustVisualPending'] = $p.Key
+            Save-State
+            $pending = $true
+        }
+    }
+    $bits = @()
+    $bits += $(if ($gamma.Ok) { 'цвет: ' + $p.Name } else { $gamma.Message })
+    $bits += $(if ($cfg.Ok) { 'client.cfg: ' + $p.Name } else { $cfg.Message })
+    if ($pending) { $bits += 'client.cfg запишется сразу после закрытия Rust — режим сохранён' }
+    return [pscustomobject]@{ Ok = [bool]($gamma.Ok -or $cfg.Ok); Message = ($bits -join '   ·   ') }
+}
+
+# Если при применении пресета Rust был запущен, client.cfg записывается
+# позже: при запуске программы и раз в ~30 секунд, как только игра закрыта.
+function Update-PendingVisualCfg {
+    try {
+        $key = [string]$script:State['RustVisualPending']
+        if (-not $key) { return $false }
+        if (-not $script:RustExe) { return $false }
+        if (Test-RustRunning) { return $false }
+        $r = Set-RustVisualCfg $key
+        if ($r.Ok) {
+            $script:State.Remove('RustVisualPending')
+            Save-State
+            Write-Log ('Картинка: пресет «' + (Get-LookPresetName $key) + '» записан в client.cfg после закрытия игры') 'ok'
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+# После перезагрузки Windows гамма сбрасывается. Если пресет был включён,
+# возвращаем его при запуске программы — режим остаётся тем же.
+function Restore-LookOnStartup {
+    try {
+        if (-not [bool]$script:State['GammaActive']) { return $false }
+        $key = [string]$script:State['GammaPreset']
+        if (-not $key) { return $false }
+        $r = Apply-LookPreset $key
+        if ($r.Ok) {
+            Write-Log ('Картинка: пресет «' + (Get-LookPresetName $key) + '» восстановлен при запуске') 'ok'
+        }
+        return [bool]$r.Ok
+    } catch { return $false }
+}
+
+# Драйвер может вернуть свою таблицу при входе в полноэкранный режим.
+# Раз в ~30 секунд тихо проверяем совпадение и возвращаем выбранный пресет.
+function Test-LookDrift {
+    try {
+        if (-not [bool]$script:State['GammaActive']) { return $false }
+        $key = [string]$script:State['GammaPreset']
+        if (-not $key) { return $false }
+        $original = Read-GammaBackup
+        if ($null -eq $original) { return $false }
+        $expected = New-LookRamp $original $key
+        $now = $null
+        try { $now = [RustSuite.Native]::GammaGet() } catch {}
+        if ($null -eq $now -or $now.Length -ne 768) { return $false }
+        if (Test-RampClose $now $expected 4096) { return $false }
+        $ok = $false
+        try { $ok = [RustSuite.Native]::GammaSet($expected) } catch {}
+        return [bool]$ok
+    } catch { return $false }
+}
+
 # ============================================================
 #  RUST: визуальные cfg-пресеты (только официальные конвары)
 # ============================================================
@@ -3269,6 +3350,7 @@ function Set-RustVisualCfg {
     $p = Get-LookPreset $Key
     $script:State['RustVisualPreset'] = $p.Key
     $script:State['RustVisualAt'] = (Get-Date).ToString('s')
+    $script:State.Remove('RustVisualPending')
     Save-State
     Write-Log ('RUST: записан визуальный пресет «' + $p.Name + '» (' + $lines.Count + ' конваров, client.cfg)') 'ok'
     return [pscustomobject]@{ Ok = $true; Message = ('client.cfg обновлён: ' + $p.Name + '. Бэкап: ' + $script:RustBackup) }
@@ -3281,6 +3363,9 @@ function Undo-RustVisualCfg {
     if (-not $dir) { return [pscustomobject]@{ Ok = $false; Message = 'Папка cfg недоступна.' } }
     $file = Join-Path $dir 'client.cfg'
     if (Restore-VisualSnapshot $file) {
+        $script:State.Remove('RustVisualPending')
+        $script:State.Remove('RustVisualPreset')
+        Save-State
         Write-Log 'RUST: исходные значения визуальных конваров восстановлены' 'ok'
         return [pscustomobject]@{ Ok = $true; Message = 'Исходные значения client.cfg восстановлены.' }
     }
@@ -4989,7 +5074,8 @@ namespace RustSuite
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
-                     ControlStyles.SupportsTransparentBackColor, true);
+                     ControlStyles.SupportsTransparentBackColor |
+                     ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
             BackColor = Color.Transparent;
             Cursor = Cursors.Hand;
         }
@@ -6779,6 +6865,7 @@ if ($SelfTest) {
     # Картинка: функции, пресеты и математика гаммы
     foreach ($fn in 'Get-LookPreset', 'New-NeutralRamp', 'New-LookRamp', 'Test-RampClose',
                     'Apply-LookPreset', 'Restore-LookGamma', 'Get-GammaStatus',
+                    'Enable-LookPreset', 'Restore-LookOnStartup', 'Test-LookDrift', 'Update-PendingVisualCfg',
                     'Set-RustVisualCfg', 'Undo-RustVisualCfg', 'Get-RustVisualPresetLines',
                     'Get-GpuInfo', 'Get-GpuPanelGuide', 'Open-GpuPanel', 'Get-GpuStatusText') {
         if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
@@ -9279,6 +9366,8 @@ function Get-PictureStatusText {
              else { 'цвет: только панель драйвера' }
     $rv = [string]$script:State['RustVisualPreset']
     $cfg = if ($rv) { 'client.cfg: ' + (Get-LookPresetName $rv) } else { 'client.cfg: без изменений' }
+    $pend = [string]$script:State['RustVisualPending']
+    if ($pend) { $cfg = 'client.cfg: ' + (Get-LookPresetName $pend) + ' (запишется после закрытия Rust)' }
     return ($color + '   ·   ' + $cfg)
 }
 
@@ -9288,6 +9377,26 @@ function Update-PictureStatusLabel {
             $script:PictureStatusLabel.Text = Get-PictureStatusText
         }
     } catch {}
+}
+
+# Выбор плитки: подсветка, описание, состояние. Само применение —
+# отдельно (двойной клик), чтобы одиночный клик оставался безопасным.
+function Select-LookPreset {
+    param([string]$Key)
+    if (-not $Key) { return }
+    $script:LookPreset = $Key
+    foreach ($t in @($script:PictureTiles)) {
+        try { if ($t -and -not $t.IsDisposed) { $t.Selected = ([string]$t.Tag -eq $Key) } } catch {}
+    }
+    try { if ($script:PicturePreviewAfter -and -not $script:PicturePreviewAfter.IsDisposed) { $script:PicturePreviewAfter.Invalidate() } } catch {}
+    try {
+        if ($script:PictureDescLabel -and -not $script:PictureDescLabel.IsDisposed) {
+            $script:PictureDescLabel.Text = [string](Get-LookPreset $Key).Desc
+        }
+    } catch {}
+    $script:State['LookPreset'] = $Key
+    Save-State
+    Update-PictureStatusLabel
 }
 
 function New-LookPreview {
@@ -9551,7 +9660,7 @@ function Show-PicturePanel {
 
     # ---------- Пресеты ----------
     $lblPresets = New-Object System.Windows.Forms.Label
-    $lblPresets.Text      = 'ПРЕСЕТЫ КАРТИНКИ · нажмите, чтобы выбрать'
+    $lblPresets.Text      = 'ПРЕСЕТЫ КАРТИНКИ · двойной клик — применить сразу'
     $lblPresets.Font      = [RustSuite.Theme]::FHead
     $lblPresets.ForeColor = [RustSuite.Theme]::Muted
     $lblPresets.BackColor = [System.Drawing.Color]::Transparent
@@ -9588,19 +9697,15 @@ function Show-PicturePanel {
         $tile.Add_Click({
             param($s, $e)
             $key = [string]$s.Tag
-            $script:LookPreset = $key
-            foreach ($t in @($script:PictureTiles)) {
-                try { if ($t -and -not $t.IsDisposed) { $t.Selected = ([string]$t.Tag -eq $key) } } catch {}
-            }
-            try { if ($script:PicturePreviewAfter -and -not $script:PicturePreviewAfter.IsDisposed) { $script:PicturePreviewAfter.Invalidate() } } catch {}
-            try {
-                if ($script:PictureDescLabel -and -not $script:PictureDescLabel.IsDisposed) {
-                    $script:PictureDescLabel.Text = [string](Get-LookPreset $key).Desc
-                }
-            } catch {}
-            $script:State['LookPreset'] = $key
-            Save-State
-            Set-Status ('Пресет картинки: ' + (Get-LookPresetName $key)) '#8B949E'
+            Select-LookPreset $key
+            Set-Status ('Пресет картинки: ' + (Get-LookPresetName $key) + ' — двойной клик, чтобы применить') '#8B949E'
+        })
+        $tile.Add_DoubleClick({
+            param($s, $e)
+            $key = [string]$s.Tag
+            Select-LookPreset $key
+            $r = Enable-LookPreset $key
+            Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
             Update-PictureStatusLabel
         })
         $script:PictureTiles += $tile
@@ -9664,8 +9769,10 @@ function Show-PicturePanel {
     $y += S 46
 
     $gammaNote = New-Object System.Windows.Forms.Label
-    $gammaNote.Text      = 'Гамма действует на основной монитор и сбрасывается после перезагрузки Windows. ' +
-                           'В полноэкранной игре драйвер может вернуть свою таблицу — тогда используйте панель NVIDIA/AMD.'
+    $gammaNote.Text      = 'Двойной клик по плитке применяет пресет сразу: гамма Windows + официальные конвары. ' +
+                           'Если Rust открыт, client.cfg запишется автоматически после выхода из игры. ' +
+                           'Цвет восстанавливается при запуске программы и возвращается, ' +
+                           'если драйвер сбросил его в полноэкранном режиме.'
     $gammaNote.Font      = [RustSuite.Theme]::FSmall
     $gammaNote.ForeColor = [RustSuite.Theme]::Muted
     $gammaNote.BackColor = [System.Drawing.Color]::Transparent
@@ -9920,6 +10027,15 @@ function Start-DeepCleanFromUi {
 }
 
 function Update-Stats {
+    # Раз в ~30 секунд возвращаем пресет цвета, если драйвер его сбросил.
+    $script:LookGuard = [int]$script:LookGuard + 1
+    if ($script:LookGuard -ge 12) {
+        $script:LookGuard = 0
+        if (-not $script:TestUi) {
+            try { [void](Test-LookDrift) } catch {}
+            try { [void](Update-PendingVisualCfg) } catch {}
+        }
+    }
     $cpu = -1
     $ram = -1
     try {
@@ -10289,6 +10405,12 @@ $form.Add_Shown({
     Show-Group 'home'
     Update-Stats
 
+    if (-not $script:TestUi) {
+        try { [void](Restore-LookOnStartup) } catch {}
+        try { [void](Update-PendingVisualCfg) } catch {}
+        try { Update-PictureStatusLabel } catch {}
+    }
+
     Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
     Write-Log ('Права администратора: ' + $(if ($script:IsAdmin) { 'да' } else { 'НЕТ — часть функций не сработает' })) $(if ($script:IsAdmin) { 'info' } else { 'warn' })
     Write-Log ('Steam: ' + $(if ($script:SteamPath) { $script:SteamPath } else { 'не найден' })) 'info'
@@ -10401,6 +10523,16 @@ $form.Add_Shown({
                         if ([int]$script:PreviewPaints -lt 1) { throw 'PICTURE PREVIEW NOT PAINTED' }
                         if ($script:PictureStatusLabel -and $script:PictureStatusLabel.Text.Length -lt 3) {
                             throw 'PICTURE STATUS MISSING'
+                        }
+                        # Одиночный клик выбирает пресет и сохраняет его в состоянии;
+                        # применение остаётся за двойным кликом.
+                        $firstTile = $tiles | Select-Object -First 1
+                        if ($firstTile) {
+                            $tkey = [string]$firstTile.Tag
+                            Select-LookPreset $tkey
+                            if (-not $firstTile.Selected) { throw 'PICTURE TILE SELECT FAILED' }
+                            if ([string]$script:State['LookPreset'] -ne $tkey) { throw 'PICTURE PRESET NOT PERSISTED' }
+                            Update-PictureStatusLabel
                         }
                         try { $script:RowHost.PerformLayout() } catch {}
                         try { $script:ContentScrollStrip.Sync() } catch {}

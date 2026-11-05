@@ -155,6 +155,7 @@ if ($SelfTest) {
     # Картинка: функции, пресеты и математика гаммы
     foreach ($fn in 'Get-LookPreset', 'New-NeutralRamp', 'New-LookRamp', 'Test-RampClose',
                     'Apply-LookPreset', 'Restore-LookGamma', 'Get-GammaStatus',
+                    'Enable-LookPreset', 'Restore-LookOnStartup', 'Test-LookDrift', 'Update-PendingVisualCfg',
                     'Set-RustVisualCfg', 'Undo-RustVisualCfg', 'Get-RustVisualPresetLines',
                     'Get-GpuInfo', 'Get-GpuPanelGuide', 'Open-GpuPanel', 'Get-GpuStatusText') {
         if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {

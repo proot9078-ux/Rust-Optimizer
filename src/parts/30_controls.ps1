@@ -1053,7 +1053,8 @@ namespace RustSuite
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
-                     ControlStyles.SupportsTransparentBackColor, true);
+                     ControlStyles.SupportsTransparentBackColor |
+                     ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true);
             BackColor = Color.Transparent;
             Cursor = Cursors.Hand;
         }

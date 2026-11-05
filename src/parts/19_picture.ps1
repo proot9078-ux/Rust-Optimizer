@@ -7,6 +7,7 @@ $script:GpuInfo      = $null
 $script:GpuInfoAt    = [datetime]::MinValue
 $script:LookPreset   = 'vivid'
 $script:LookTiles    = @{}
+$script:LookGuard    = 0
 $script:GammaDir     = Join-Path $script:Root 'gamma'
 try { New-Item -ItemType Directory -Force -Path $script:GammaDir | Out-Null } catch {}
 
@@ -192,6 +193,86 @@ function Restore-LookGamma {
     return [pscustomobject]@{ Ok = $true; Message = 'Исходный цвет восстановлен.' }
 }
 
+# Применить пресет целиком: цвет Windows + официальные конвары client.cfg.
+# Используется двойным кликом по плитке на странице «КАРТИНКА».
+function Enable-LookPreset {
+    param([string]$Key)
+    $p = Get-LookPreset $Key
+    $gamma = Apply-LookPreset $p.Key
+    $cfg = Set-RustVisualCfg $p.Key
+    $pending = $false
+    if (-not $cfg.Ok) {
+        $running = $false
+        try { $running = Test-RustRunning } catch {}
+        if ($running) {
+            # Игра перезапишет client.cfg при выходе, поэтому запись
+            # откладывается до закрытия Rust и повторяется автоматически.
+            $script:State['RustVisualPending'] = $p.Key
+            Save-State
+            $pending = $true
+        }
+    }
+    $bits = @()
+    $bits += $(if ($gamma.Ok) { 'цвет: ' + $p.Name } else { $gamma.Message })
+    $bits += $(if ($cfg.Ok) { 'client.cfg: ' + $p.Name } else { $cfg.Message })
+    if ($pending) { $bits += 'client.cfg запишется сразу после закрытия Rust — режим сохранён' }
+    return [pscustomobject]@{ Ok = [bool]($gamma.Ok -or $cfg.Ok); Message = ($bits -join '   ·   ') }
+}
+
+# Если при применении пресета Rust был запущен, client.cfg записывается
+# позже: при запуске программы и раз в ~30 секунд, как только игра закрыта.
+function Update-PendingVisualCfg {
+    try {
+        $key = [string]$script:State['RustVisualPending']
+        if (-not $key) { return $false }
+        if (-not $script:RustExe) { return $false }
+        if (Test-RustRunning) { return $false }
+        $r = Set-RustVisualCfg $key
+        if ($r.Ok) {
+            $script:State.Remove('RustVisualPending')
+            Save-State
+            Write-Log ('Картинка: пресет «' + (Get-LookPresetName $key) + '» записан в client.cfg после закрытия игры') 'ok'
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+# После перезагрузки Windows гамма сбрасывается. Если пресет был включён,
+# возвращаем его при запуске программы — режим остаётся тем же.
+function Restore-LookOnStartup {
+    try {
+        if (-not [bool]$script:State['GammaActive']) { return $false }
+        $key = [string]$script:State['GammaPreset']
+        if (-not $key) { return $false }
+        $r = Apply-LookPreset $key
+        if ($r.Ok) {
+            Write-Log ('Картинка: пресет «' + (Get-LookPresetName $key) + '» восстановлен при запуске') 'ok'
+        }
+        return [bool]$r.Ok
+    } catch { return $false }
+}
+
+# Драйвер может вернуть свою таблицу при входе в полноэкранный режим.
+# Раз в ~30 секунд тихо проверяем совпадение и возвращаем выбранный пресет.
+function Test-LookDrift {
+    try {
+        if (-not [bool]$script:State['GammaActive']) { return $false }
+        $key = [string]$script:State['GammaPreset']
+        if (-not $key) { return $false }
+        $original = Read-GammaBackup
+        if ($null -eq $original) { return $false }
+        $expected = New-LookRamp $original $key
+        $now = $null
+        try { $now = [RustSuite.Native]::GammaGet() } catch {}
+        if ($null -eq $now -or $now.Length -ne 768) { return $false }
+        if (Test-RampClose $now $expected 4096) { return $false }
+        $ok = $false
+        try { $ok = [RustSuite.Native]::GammaSet($expected) } catch {}
+        return [bool]$ok
+    } catch { return $false }
+}
+
 # ============================================================
 #  RUST: визуальные cfg-пресеты (только официальные конвары)
 # ============================================================
@@ -343,6 +424,7 @@ function Set-RustVisualCfg {
     $p = Get-LookPreset $Key
     $script:State['RustVisualPreset'] = $p.Key
     $script:State['RustVisualAt'] = (Get-Date).ToString('s')
+    $script:State.Remove('RustVisualPending')
     Save-State
     Write-Log ('RUST: записан визуальный пресет «' + $p.Name + '» (' + $lines.Count + ' конваров, client.cfg)') 'ok'
     return [pscustomobject]@{ Ok = $true; Message = ('client.cfg обновлён: ' + $p.Name + '. Бэкап: ' + $script:RustBackup) }
@@ -355,6 +437,9 @@ function Undo-RustVisualCfg {
     if (-not $dir) { return [pscustomobject]@{ Ok = $false; Message = 'Папка cfg недоступна.' } }
     $file = Join-Path $dir 'client.cfg'
     if (Restore-VisualSnapshot $file) {
+        $script:State.Remove('RustVisualPending')
+        $script:State.Remove('RustVisualPreset')
+        Save-State
         Write-Log 'RUST: исходные значения визуальных конваров восстановлены' 'ok'
         return [pscustomobject]@{ Ok = $true; Message = 'Исходные значения client.cfg восстановлены.' }
     }
