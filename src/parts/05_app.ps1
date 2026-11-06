@@ -65,7 +65,7 @@ function Install-AppShortcut {
         $sc.TargetPath       = $bat
         $sc.WorkingDirectory = $root
         if ($iconLoc) { $sc.IconLocation = $iconLoc }
-        $sc.Description      = 'PURPLE RUSH — RUST PERFORMANCE ENGINE'
+        $sc.Description      = 'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE'
         $sc.WindowStyle      = 1
         $sc.Save()
         return $lnk

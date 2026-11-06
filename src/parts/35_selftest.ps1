@@ -18,6 +18,7 @@ if ($SelfTest) {
     Write-Host ("Admin      : " + $script:IsAdmin)
     Write-Host ("Steam      : " + $(if ($script:SteamPath) { $script:SteamPath } else { '<not found>' }))
     Write-Host ("Rust       : " + $(if ($script:RustExe) { $script:RustExe } else { '<not found>' }))
+    Write-Host ("Fortnite   : " + $(if ($script:FortniteExe) { $script:FortniteExe } else { '<not found>' }))
     Write-Host ("Cfg dir    : " + $(if ($script:RustExe) { [string](Get-RustCfgDir) } else { '<n/a>' }))
     Write-Host ("Tweaks     : " + $script:Tweaks.Count)
     Write-Host ("Core mask  : 0x" + ('{0:X}' -f (Get-PhysicalCoreMask)))
@@ -259,6 +260,51 @@ if ($SelfTest) {
         Write-Host ('PICTURE CHECK ERROR: ' + $_.Exception.Message); $fail++
         Write-Host ([string]$_.ScriptStackTrace)
     }
+
+    # ---------- FORTNITE: пресеты и официальный INI ----------
+    foreach ($fn in 'Find-FortniteExe', 'Get-FortniteCfgDir', 'Get-FortniteCfgFile',
+                    'Test-FortniteRunning', 'Get-FortniteClientInfo', 'Get-FortnitePreset',
+                    'Get-FortnitePresetName', 'Get-FortniteCfgStatusText', 'Merge-IniFile',
+                    'Set-FortniteCfgPreset', 'Update-PendingFortniteCfg', 'Undo-FortniteCfg',
+                    'Invoke-FortniteCfg', 'Invoke-FortniteCompat', 'Undo-FortniteCompat',
+                    'Invoke-FortniteGpu', 'Undo-FortniteGpu', 'Invoke-FortnitePriority',
+                    'Invoke-FortniteAffinity', 'Invoke-FortniteProcessPolish', 'Get-FortniteCompatText') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING FORTNITE FUNCTION: ' + $fn); $fail++
+        }
+    }
+    foreach ($id in 'fortnitecompat', 'fortnitegpu', 'fortniteprio', 'fortniteaffinity', 'fortnitecfg') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ('MISSING FORTNITE TWEAK: ' + $id); $fail++
+        }
+    }
+    try {
+        if (@($script:FortnitePresets).Count -lt 3) { Write-Host 'FORTNITE PRESETS MISSING'; $fail++ }
+        $fpKeys = @($script:FortnitePresets | ForEach-Object { [string]$_.Key })
+        if (@($fpKeys | Select-Object -Unique).Count -ne $fpKeys.Count) {
+            Write-Host 'DUPLICATE FORTNITE PRESET KEYS'; $fail++
+        }
+        foreach ($p in @($script:FortnitePresets)) {
+            if (@($p.Blocks).Count -lt 3) { Write-Host ('FORTNITE PRESET BLOCKS BROKEN: ' + $p.Key); $fail++ }
+        }
+
+        # Слияние INI: значения заменяются, чужие ключи и секции сохраняются.
+        $tmpIni = Join-Path $env:TEMP ('rustopt-fn-' + [Guid]::NewGuid().ToString('N') + '.ini')
+        $ini = "[/Script/FortniteGame.FortGameUserSettings]`r`nFrameRateLimit=60.000000`r`nkeep.me=1`r`n`r`n[ScalabilityGroups]`r`nsg.ShadowQuality=3`r`nkeep.other=2`r`n"
+        [IO.File]::WriteAllText($tmpIni, $ini, (New-Object System.Text.UTF8Encoding($false)))
+        Merge-IniFile -Path $tmpIni -Section '[/Script/FortniteGame.FortGameUserSettings]' -Lines @('FrameRateLimit=0.000000', 'bUseVSync=False')
+        Merge-IniFile -Path $tmpIni -Section '[ScalabilityGroups]' -Lines @('sg.ShadowQuality=0', 'sg.ViewDistanceQuality=2')
+        $outIni = [IO.File]::ReadAllText($tmpIni)
+        if ($outIni -notmatch 'FrameRateLimit=0\.000000') { Write-Host 'FORTNITE INI REPLACE FAILED'; $fail++ }
+        if ($outIni -notmatch 'bUseVSync=False') { Write-Host 'FORTNITE INI APPEND FAILED'; $fail++ }
+        if (([regex]::Matches($outIni, 'FrameRateLimit=')).Count -ne 1) { Write-Host 'FORTNITE INI DUPLICATE KEY'; $fail++ }
+        if ($outIni -notmatch 'keep\.me=1') { Write-Host 'FORTNITE INI LOST FOREIGN KEY'; $fail++ }
+        if ($outIni -notmatch 'sg\.ShadowQuality=0') { Write-Host 'FORTNITE INI SECTION REPLACE FAILED'; $fail++ }
+        if ($outIni -notmatch 'sg\.ViewDistanceQuality=2') { Write-Host 'FORTNITE INI SECTION APPEND FAILED'; $fail++ }
+        if ($outIni -notmatch 'keep\.other=2') { Write-Host 'FORTNITE INI LOST OTHER SECTION KEY'; $fail++ }
+        Remove-Item -LiteralPath $tmpIni -Force -ErrorAction SilentlyContinue
+        if (-not (Get-FortniteCompatText)) { Write-Host 'FORTNITE COMPAT TEXT EMPTY'; $fail++ }
+    } catch { Write-Host ('FORTNITE CHECK ERROR: ' + $_.Exception.Message); $fail++ }
 
     # Валидация биндов
     $oldBinds = $script:State['Binds']

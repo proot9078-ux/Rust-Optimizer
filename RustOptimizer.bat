@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title PURPLE RUSH - RUST PERFORMANCE ENGINE
+title PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE
 cd /d "%~dp0"
 rem ============================================================
 rem  PURPLE RUSH - RUST PERFORMANCE ENGINE

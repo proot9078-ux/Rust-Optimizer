@@ -1,6 +1,6 @@
 ﻿# ============================================================
-#  PURPLE RUSH - RUST PERFORMANCE ENGINE  v5.3
-#  Оптимизация Windows под RUST + официальные cfg/бинды +
+#  PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE  v7.0
+#  Оптимизация Windows под RUST и FORTNITE + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '6.2'
+$script:AppVersion   = '7.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -450,8 +450,8 @@ function Get-PhysicalCoreMask {
 #  Файлы Rust: бэкапы и слияние cfg
 # ============================================================
 function Backup-FileOnce {
-    param([string]$Path, [string]$Tag)
-    $dest = Join-Path $script:RustBackup ($Tag + '.orig')
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
+    $dest = Join-Path $Dir ($Tag + '.orig')
     if (Test-Path -LiteralPath $dest) { return $dest }
     if (Test-Path -LiteralPath $Path) {
         try { Copy-Item -LiteralPath $Path -Destination $dest -Force } catch {}
@@ -462,20 +462,20 @@ function Backup-FileOnce {
 }
 
 function Backup-FileStamp {
-    param([string]$Path, [string]$Tag)
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
     if (-not (Test-Path -LiteralPath $Path)) { return }
     try {
         $name = $Tag + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak'
-        Copy-Item -LiteralPath $Path -Destination (Join-Path $script:RustBackup $name) -Force
-        $old = @(Get-ChildItem -LiteralPath $script:RustBackup -Filter ($Tag + '-*.bak') -ErrorAction SilentlyContinue |
+        Copy-Item -LiteralPath $Path -Destination (Join-Path $Dir $name) -Force
+        $old = @(Get-ChildItem -LiteralPath $Dir -Filter ($Tag + '-*.bak') -ErrorAction SilentlyContinue |
                  Sort-Object LastWriteTime -Descending | Select-Object -Skip 10)
         foreach ($f in $old) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue }
     } catch {}
 }
 
 function Restore-FileOnce {
-    param([string]$Path, [string]$Tag)
-    $src = Join-Path $script:RustBackup ($Tag + '.orig')
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
+    $src = Join-Path $Dir ($Tag + '.orig')
     if (-not (Test-Path -LiteralPath $src)) { return $false }
     $text = ''
     try { $text = [IO.File]::ReadAllText($src) } catch { return $false }

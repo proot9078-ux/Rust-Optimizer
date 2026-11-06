@@ -296,6 +296,31 @@ $script:Tweaks = @(
         Name = 'Пауза Storage Sense'
         Desc = 'Windows не запускает фоновую автоочистку диска во время игры — меньше микрофризов на SSD/HDD.'
         Apply = { Invoke-StorageSenseOff }; Undo = { Undo-StorageSenseOff } }
+
+    [pscustomobject]@{ Id = 'fortnitecompat'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Честный полный экран Fortnite'
+        Desc = 'Отключает «оптимизации полного экрана» для FortniteClient-Win64-Shipping.exe — меньше инпут-лага.'
+        Apply = { Invoke-FortniteCompat }; Undo = { Undo-FortniteCompat } }
+
+    [pscustomobject]@{ Id = 'fortnitegpu'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Fortnite на дискретной видеокарте'
+        Desc = 'Явно привязывает клиент Fortnite к профилю «Высокая производительность» GPU Windows.'
+        Apply = { Invoke-FortniteGpu }; Undo = { Undo-FortniteGpu } }
+
+    [pscustomobject]@{ Id = 'fortniteprio'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Приоритет Fortnite → High'
+        Desc = 'Повышает приоритет запущенного FortniteClient-Win64-Shipping.exe. Real-time не используется.'
+        Apply = { Invoke-FortnitePriority }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'fortniteaffinity'; Group = 'fortnite'; Risk = $true; Default = $false
+        Name = 'Fortnite только на физических ядрах'
+        Desc = 'Привязывает Fortnite к физическим ядрам без Hyper-Threading. На части CPU даёт минус — тестируйте.'
+        Apply = { Invoke-FortniteAffinity }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'fortnitecfg'; Group = 'fortnite'; Risk = $false; Default = $false
+        Name = 'Fortnite: пресет максимального FPS'
+        Desc = 'Записывает официальные настройки меню игры в GameUserSettings.ini: эффекты на минимум, VSync off, полный экран. Нужен закрытый Fortnite.'
+        Apply = { Invoke-FortniteCfg }; Undo = { Undo-FortniteCfg } }
 )
 
 # Восстанавливаем выбор пользователя между запусками

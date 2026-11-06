@@ -9,7 +9,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $script:MainForm     = $form
-$form.Text            = 'PURPLE RUSH — RUST PERFORMANCE ENGINE'
+$form.Text            = 'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE'
 $form.StartPosition   = 'CenterScreen'
 $form.FormBorderStyle = 'Sizable'
 $form.MaximizeBox     = $false
@@ -114,8 +114,8 @@ $header.Add_Paint({
         $tf = [System.Windows.Forms.TextFormatFlags]::NoPadding
 
         $f  = [RustSuite.Theme]::FTitle
-        $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST', $f).Width
-        [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST', $f,
+        $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST / FORTNITE', $f).Width
+        [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST / FORTNITE', $f,
             [System.Drawing.Point]::new((S 26), (S 15)), [RustSuite.Theme]::Accent, $tf)
         $w2 = [System.Windows.Forms.TextRenderer]::MeasureText('PERFORMANCE SUITE', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'PERFORMANCE SUITE', $f,
@@ -143,7 +143,7 @@ $header.Add_Paint({
                 [RustSuite.Theme]::AccentLt, $vcf)
         }
 
-        $sub = 'оптимизация Windows под RUST   ·   журнал: ProgramData\RustOptimizer'
+        $sub = 'оптимизация Windows под RUST и FORTNITE   ·   журнал: ProgramData\RustOptimizer'
         [System.Windows.Forms.TextRenderer]::DrawText($g, $sub, [RustSuite.Theme]::FSub,
             [System.Drawing.Point]::new((S 28), (S 70)), [RustSuite.Theme]::Muted, $tf)
 
@@ -164,14 +164,19 @@ $header.Add_Paint({
               [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $chip, [RustSuite.Theme]::FSmall, $crect, $ccol, $cf)
 
-        $rst = if (-not $script:RustExe) { 'RUST НЕ НАЙДЕН' }
-               elseif ($script:RustRunning) { 'RUST ЗАПУЩЕН' }
-               else { 'RUST ГОТОВ' }
-        $rc  = if (-not $script:RustExe) { [RustSuite.Theme]::Warn }
-               elseif ($script:RustRunning) { [RustSuite.Theme]::AccentLt }
+        $rsParts = @()
+        if (-not $script:RustExe) { $rsParts += 'RUST НЕ НАЙДЕН' }
+        elseif ($script:RustRunning) { $rsParts += 'RUST ЗАПУЩЕН' }
+        else { $rsParts += 'RUST ГОТОВ' }
+        if (-not $script:FortniteExe) { $rsParts += 'FORTNITE НЕ НАЙДЕН' }
+        elseif ($script:FortniteRunning) { $rsParts += 'FORTNITE ЗАПУЩЕН' }
+        else { $rsParts += 'FORTNITE ГОТОВ' }
+        $rst = ($rsParts -join '   ·   ')
+        $rc  = if ($script:RustRunning -or $script:FortniteRunning) { [RustSuite.Theme]::AccentLt }
+               elseif (-not $script:RustExe -or -not $script:FortniteExe) { [RustSuite.Theme]::Warn }
                else { [RustSuite.Theme]::Ok }
         $rsz = [System.Windows.Forms.TextRenderer]::MeasureText($rst, [RustSuite.Theme]::FSmall)
-        $rrect = [System.Drawing.Rectangle]::new(($s.Width - $cw - (S 26)), (S 50), $cw, (S 20))
+        $rrect = [System.Drawing.Rectangle]::new(($s.Width - [Math]::Max($cw, ($rsz.Width + (S 20))) - (S 26)), (S 50), [Math]::Max($cw, ($rsz.Width + (S 20))), (S 20))
         $rf = [System.Windows.Forms.TextFormatFlags]::Right -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $rst, [RustSuite.Theme]::FSmall, $rrect, $rc, $rf)
         $line = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, [RustSuite.Theme]::Accent)), 1
@@ -192,7 +197,7 @@ $footer.Add_Paint({
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
     try {
-        $hint = 'Ctrl+1…9 — разделы    ·    Ctrl+R — обновить статистику'
+        $hint = 'Ctrl+1…9, Ctrl+0 — разделы    ·    Ctrl+R — обновить статистику'
         $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
         [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
             [RustSuite.Theme]::FSmall, $hr,
@@ -289,20 +294,21 @@ $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock       = 'Fill'
 $navTop.BackColor  = [RustSuite.Theme]::Bg
-# При минимальной высоте окна восемь пунктов не помещаются —
+# При минимальной высоте окна пункты меню не помещаются —
 # включаем прокрутку вместо наложения на блок «ПРОФИЛИ».
 $navTop.AutoScroll = $true
 $navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
-    @{ Id = 'home';    Glyph = '◉'; Title = 'ОБЗОР';    Sub = 'оценка и быстрые действия' },
-    @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
-    @{ Id = 'net';     Glyph = '↔'; Title = 'СЕТЬ';     Sub = 'пинг и пакеты' },
-    @{ Id = 'rust';    Glyph = '▶'; Title = 'RUST';     Sub = 'профиль игры' },
-    @{ Id = 'picture'; Glyph = '◐'; Title = 'КАРТИНКА'; Sub = 'цвет и панель GPU' },
-    @{ Id = 'binds';   Glyph = '⌨'; Title = 'БИНДЫ';    Sub = 'keys.cfg одной кнопкой' },
-    @{ Id = 'clean';   Glyph = '✦'; Title = 'ОЧИСТКА';  Sub = 'мусор и фоновые' },
-    @{ Id = 'repair';  Glyph = '◈'; Title = 'РЕМОНТ';   Sub = 'проверка и лечение Windows' },
+    @{ Id = 'home';     Glyph = '◉'; Title = 'ОБЗОР';     Sub = 'оценка и быстрые действия' },
+    @{ Id = 'sys';      Glyph = '◆'; Title = 'СИСТЕМА';   Sub = 'питание и приоритеты' },
+    @{ Id = 'net';      Glyph = '↔'; Title = 'СЕТЬ';      Sub = 'пинг и пакеты' },
+    @{ Id = 'rust';     Glyph = '▶'; Title = 'RUST';      Sub = 'профиль игры' },
+    @{ Id = 'fortnite'; Glyph = '✦'; Title = 'FORTNITE';  Sub = 'профиль игры и FPS' },
+    @{ Id = 'picture';  Glyph = '◐'; Title = 'КАРТИНКА';  Sub = 'цвет и панель GPU' },
+    @{ Id = 'binds';    Glyph = '⌨'; Title = 'БИНДЫ';     Sub = 'keys.cfg одной кнопкой' },
+    @{ Id = 'clean';    Glyph = '✧'; Title = 'ОЧИСТКА';   Sub = 'мусор и фоновые' },
+    @{ Id = 'repair';   Glyph = '◈'; Title = 'РЕМОНТ';    Sub = 'проверка и лечение Windows' },
     @{ Id = 'settings'; Glyph = '⚙'; Title = 'НАСТРОЙКИ'; Sub = 'темы и мониторинг' }
 )
 
@@ -318,7 +324,8 @@ foreach ($grp in $script:Groups) {
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
     $b.Add_Click({ param($s, $e) Request-Group $s.Tag })
-    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
+    $hk = if ($i -eq 9) { 'Ctrl+0' } else { 'Ctrl+' + ($i + 1) }
+    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`n" + $hk)) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
     $i = $i + 1
@@ -364,7 +371,7 @@ $rightCol.ColumnCount = 1
 $rightCol.RowCount    = 2
 $rightCol.BackColor   = [RustSuite.Theme]::PanelBg
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
-    [System.Windows.Forms.SizeType]::Absolute, (S 168))))
+    [System.Windows.Forms.SizeType]::Absolute, (S 190))))
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Percent, 100)))
 
@@ -402,6 +409,7 @@ $script:CpuVal = New-MetricLabel '—' (S 190) (S 30) (S 170) ([RustSuite.Theme]
 $script:RamVal = New-MetricLabel '—' (S 190) (S 66) (S 170) ([RustSuite.Theme]::TextC)
 $script:DiskVal = New-MetricLabel '—' (S 190) (S 102) (S 170) ([RustSuite.Theme]::TextC)
 $script:RustState = New-MetricLabel '—' (S 60) (S 130) (S 300) ([RustSuite.Theme]::TextC)
+$script:FortniteState = New-MetricLabel '—' (S 90) (S 152) (S 270) ([RustSuite.Theme]::TextC)
 $script:CpuVal.TextAlign  = 'MiddleRight'
 $script:RamVal.TextAlign  = 'MiddleRight'
 $script:DiskVal.TextAlign = 'MiddleRight'
@@ -427,7 +435,8 @@ $statsPanel.Controls.AddRange(@(
     (New-MetricLabel 'ОЗУ'  (S 14) (S 66) (S 80) ([RustSuite.Theme]::Muted)),
     (New-MetricLabel 'ДИСК' (S 14) (S 102) (S 80) ([RustSuite.Theme]::Muted)),
     (New-MetricLabel 'RUST' (S 14) (S 130) (S 46) ([RustSuite.Theme]::Muted)),
-    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState,
+    (New-MetricLabel 'FORTNITE' (S 14) (S 152) (S 74) ([RustSuite.Theme]::Muted)),
+    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState, $script:FortniteState,
     $script:CpuBar, $script:RamBar, $script:DiskBar
 ))
 
@@ -443,6 +452,7 @@ $statsPanel.Add_Resize({
     $script:RamVal.Width  = $script:CpuVal.Width
     $script:DiskVal.Width = $script:CpuVal.Width
     $script:RustState.Width = [Math]::Max((S 100), $w - (S 74))
+    $script:FortniteState.Width = [Math]::Max((S 90), $w - (S 104))
 })
 
 $logPanel = New-Object System.Windows.Forms.Panel
@@ -762,6 +772,7 @@ function Show-Group {
     $script:PicturePreviewAfter = $null
     $script:PictureTiles        = @()
     $script:PictureDescLabel    = $null
+    $script:FortniteStatusLabel = $null
     $script:HomeGauge           = $null
     $script:HomeSpark           = $null
     $script:HomeCpuVal          = $null
@@ -807,6 +818,10 @@ function Show-Group {
     $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), $y, (S 420), (S 22)
     $script:RowHost.Controls.Add($head)
     $y += S 30
+
+    if ($gid -eq 'fortnite') {
+        $y = Add-FortnitePageExtras -W $w -Y $y
+    }
 
     if ($gid -eq 'clean') {
         $btnDeep = New-Object RustSuite.FlatButton

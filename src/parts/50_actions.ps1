@@ -138,6 +138,7 @@ function Update-Stats {
         if (-not $script:TestUi) {
             try { [void](Test-LookDrift) } catch {}
             try { [void](Update-PendingVisualCfg) } catch {}
+            try { [void](Update-PendingFortniteCfg) } catch {}
         }
     }
     $cpu = -1
@@ -222,6 +223,7 @@ function Update-Stats {
     }
 
     $script:RustRunning = Test-RustRunning
+    $script:FortniteRunning = Test-FortniteRunning
     if ($script:RustState -and -not $script:RustState.IsDisposed) {
         if (-not $script:RustExe) {
             $script:RustState.Text = 'не найден — запустите игру через Steam'
@@ -238,6 +240,19 @@ function Update-Stats {
             }
             $script:RustState.Text = 'готов' + $rver
             $script:RustState.ForeColor = [RustSuite.Theme]::Muted
+        }
+    }
+    if ($script:FortniteState -and -not $script:FortniteState.IsDisposed) {
+        if (-not $script:FortniteExe) {
+            $script:FortniteState.Text = 'не найден — установите через Epic Games'
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Warn
+        } elseif ($script:FortniteRunning) {
+            $script:FortniteState.Text = 'запущен · High · пресет ' + $(if ($script:State['FortnitePreset']) { Get-FortnitePresetName ([string]$script:State['FortnitePreset']) } else { 'по умолчанию' })
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Ok
+        } else {
+            $fver = if ($script:FortniteInfo -and $script:FortniteInfo.Found) { ' ' + $script:FortniteInfo.Version } else { '' }
+            $script:FortniteState.Text = 'готов' + $fver + ' · ' + (Get-FortniteCfgStatusText)
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Muted
         }
     }
     if ($script:Header -and -not $script:Header.IsDisposed) { $script:Header.Invalidate() }
@@ -304,6 +319,52 @@ function Start-Rust {
     }
 }
 
+# ---------- Запуск Fortnite ----------
+$script:FnLaunchTries = 0
+$script:FnLaunchTimer = New-Object System.Windows.Forms.Timer
+$script:FnLaunchTimer.Interval = 2000
+$script:FnLaunchTimer.Add_Tick({
+    $p = @(Get-FortniteProcesses)
+    if ($p.Count -gt 0) {
+        Invoke-FortniteProcessPolish
+        Write-Log 'Fortnite запущен — приоритет High применён' 'ok'
+        Set-Status 'FORTNITE запущен, оптимизация применена' '#4ECB71'
+        $script:FnLaunchTimer.Stop()
+        Update-Stats
+    } else {
+        $script:FnLaunchTries--
+        if ($script:FnLaunchTries -le 0) {
+            $script:FnLaunchTimer.Stop()
+            Write-Log 'Fortnite не появился за 3 минуты — откройте игру вручную' 'warn'
+            Set-Status 'FORTNITE не запустился автоматически' '#E3B341'
+        }
+    }
+})
+
+function Start-Fortnite {
+    if ($script:Busy) { return }
+    $started = $false
+    try {
+        [System.Diagnostics.Process]::Start('com.epicgames.launcher://apps/fn?action=launch&silent=true') | Out-Null
+        $started = $true
+    } catch {}
+    if (-not $started -and $script:FortniteExe) {
+        try {
+            [System.Diagnostics.Process]::Start($script:FortniteExe) | Out-Null
+            $started = $true
+        } catch {}
+    }
+    if (-not $started) {
+        Write-Log 'Не удалось запустить Fortnite: проверьте Epic Games Launcher' 'err'
+        Set-Status 'Fortnite не запустился — откройте Epic Games' '#E3B341'
+        return
+    }
+    Write-Log 'Запуск FORTNITE через Epic Games…' 'step'
+    Set-Status 'Ожидание процесса Fortnite…' '#FF8A4C'
+    $script:FnLaunchTries = 90
+    $script:FnLaunchTimer.Start()
+}
+
 # ---------- Кнопки ----------
 $btnSafe.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = (-not $t.Risk) }
@@ -342,7 +403,7 @@ $btnRun.Add_Click({
 
         $ansReboot = [System.Windows.Forms.MessageBox]::Show(
             ("Готово. Применено модулей: $n.`n`nДля применения всех изменений нужна перезагрузка ПК.`nПерезагрузить сейчас?`n`nОК — перезагрузка через 10 секунд (несохранённые файлы будут закрыты).`nОтмена — перезагрузите вручную позже."),
-            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OKCancel', 'Question', 'Button1')
+            'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OKCancel', 'Question', 'Button1')
 
         if ($ansReboot -eq 'OK') {
             $scheduled = $false
@@ -378,19 +439,19 @@ $btnRun.Add_Click({
             if (-not $scheduled) {
                 [void][System.Windows.Forms.MessageBox]::Show(
                     ("Не удалось перезагрузить ПК автоматически.`n`nЗапустите программу от имени администратора`nили перезагрузите компьютер вручную.`n`nЖурнал: $($script:LogFile)"),
-                    'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Warning')
+                    'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Warning')
             }
         } else {
             [void][System.Windows.Forms.MessageBox]::Show(
                 ("Перезагрузка отложена.`nЖурнал: $($script:LogFile)"),
-                'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Information')
+                'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Information')
         }
     } catch {
         $msg = $_.Exception.Message
         Write-Log ('Ошибка оптимизации: ' + $msg) 'err'
         [void][System.Windows.Forms.MessageBox]::Show(
             ("Ошибка оптимизации: $msg`n`nЖурнал: $($script:LogFile)"),
-            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Error')
+            'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Error')
     } finally {
         $btnRun.Enabled  = $true
         $btnUndo.Enabled = $true
@@ -442,6 +503,14 @@ $form.Add_KeyDown({
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
                 Request-Group $script:Groups[$idx].Id
+                $e.Handled = $true
+                $e.SuppressKeyPress = $true
+                return
+            }
+        }
+        if ($key -eq [int][System.Windows.Forms.Keys]::D0) {
+            if ($script:Groups.Count -ge 10) {
+                Request-Group $script:Groups[9].Id
                 $e.Handled = $true
                 $e.SuppressKeyPress = $true
                 return
@@ -512,13 +581,15 @@ $form.Add_Shown({
     if (-not $script:TestUi) {
         try { [void](Restore-LookOnStartup) } catch {}
         try { [void](Update-PendingVisualCfg) } catch {}
+        try { [void](Update-PendingFortniteCfg) } catch {}
         try { Update-PictureStatusLabel } catch {}
     }
 
-    Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
+    Write-Log ('PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
     Write-Log ('Права администратора: ' + $(if ($script:IsAdmin) { 'да' } else { 'НЕТ — часть функций не сработает' })) $(if ($script:IsAdmin) { 'info' } else { 'warn' })
     Write-Log ('Steam: ' + $(if ($script:SteamPath) { $script:SteamPath } else { 'не найден' })) 'info'
     Write-Log ('RUST: ' + $(if ($script:RustExe) { $script:RustExe } else { 'не найден' })) 'info'
+    Write-Log ('FORTNITE: ' + $(if ($script:FortniteExe) { $script:FortniteExe } else { 'не найден' })) 'info'
     try {
         $cores = (Get-CimInstance Win32_Processor | Select-Object -First 1).NumberOfCores
         Write-Log ('Физических ядер: ' + $cores) 'info'
@@ -680,6 +751,43 @@ $form.Add_Shown({
                         Write-Host 'PICTURE OK'
                     }
                     11 {
+                        Show-Group 'fortnite'
+                        $fcards = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] })
+                        if ($fcards.Count -lt 5) { throw 'FORTNITE CARDS MISSING' }
+                        if (-not $script:FortniteStatusLabel -or $script:FortniteStatusLabel.Text.Length -lt 3) {
+                            throw 'FORTNITE STATUS MISSING'
+                        }
+                        if ($script:FortniteExe -and (-not $script:FortniteInfo -or -not $script:FortniteInfo.Found -or [int]$script:FortniteInfo.CfgKeys -le 0)) {
+                            throw 'FORTNITE INFO MISSING'
+                        }
+                        Write-Host ('FORTNITE cards=' + $fcards.Count +
+                                    ' version=' + $(if ($script:FortniteInfo) { $script:FortniteInfo.Version } else { 'n/a' }) +
+                                    ' cfg=' + $(if ($script:FortniteInfo) { $script:FortniteInfo.CfgKeys } else { 0 }))
+                        if ($env:RUSTOPT_SHOT_FN) {
+                            try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
+                                $script:RowHost.ScrollToTop()
+                                $script:ProbeBusy = $true
+                                try {
+                                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                    while ($sw.ElapsedMilliseconds -lt 420) {
+                                        [System.Windows.Forms.Application]::DoEvents()
+                                        Start-Sleep -Milliseconds 15
+                                    }
+                                    $sw.Stop()
+                                } finally { $script:ProbeBusy = $false }
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT_FN, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
+                        Write-Host 'FORTNITE OK'
+                    }
+                    12 {
                         Show-Group 'home'
                         if (-not $script:HomeGauge -or $script:HomeGauge.IsDisposed) { throw 'HOME GAUGE MISSING' }
                         if (-not $script:HomeSpark -or $script:HomeSpark.IsDisposed) { throw 'HOME SPARKLINE MISSING' }
@@ -695,7 +803,7 @@ $form.Add_Shown({
                                     ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
                         Write-Host 'HOME OK'
                     }
-                    12 {
+                    13 {
                         try { $script:ProbeTimer.Stop() } catch {}
                         Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces

@@ -23,7 +23,7 @@ if (Test-Path -LiteralPath $parts) {
 $launcher = @'
 @echo off
 setlocal EnableExtensions
-title PURPLE RUSH - RUST PERFORMANCE ENGINE
+title PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE
 cd /d "%~dp0"
 rem ============================================================
 rem  PURPLE RUSH - RUST PERFORMANCE ENGINE
@@ -59,7 +59,7 @@ for ($i = 0; $i -lt $b64.Length; $i += 76) {
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('@echo off')
 [void]$sb.AppendLine('setlocal EnableExtensions')
-[void]$sb.AppendLine('title PURPLE RUSH - RUST PERFORMANCE ENGINE')
+[void]$sb.AppendLine('title PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE')
 [void]$sb.AppendLine('')
 [void]$sb.AppendLine('rem ============================================================')
 [void]$sb.AppendLine('rem  PURPLE RUSH - single-file launcher (self-contained)')

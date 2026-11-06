@@ -131,6 +131,16 @@ function Update-HomeLive {
                     }
                 } else { $rc.SetValue('НЕ НАЙДЕН') }
             }
+            $fc = $script:HomeCards['fortnite']
+            if ($fc -and -not $fc.IsDisposed) {
+                if ($script:FortniteExe) {
+                    if ($script:FortniteRunning) { $fc.SetValue('ЗАПУЩЕН') }
+                    else { $fc.SetValue('НАЙДЕН') }
+                    if ($script:FortniteInfo -and $script:FortniteInfo.CfgReady) {
+                        $fc.SetHint('cfg ' + $script:FortniteInfo.CfgKeys + ' · ' + (Get-FortniteCfgStatusText))
+                    }
+                } else { $fc.SetValue('НЕ НАЙДЕН') }
+            }
         }
 
         if ($script:HomeStatusLbl -and -not $script:HomeStatusLbl.IsDisposed) {
@@ -140,6 +150,10 @@ function Update-HomeLive {
             if ($script:RustInfo -and $script:RustInfo.Found -and $script:RustInfo.Unity) {
                 $rv = '   ·   RUST ' + $script:RustInfo.Unity
                 if ($script:RustInfo.CfgReady) { $rv += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            if ($script:FortniteInfo -and $script:FortniteInfo.Found) {
+                $rv += '   ·   FORTNITE ' + $script:FortniteInfo.Version
+                if ($script:FortniteInfo.CfgReady) { $rv += ' · cfg ' + $script:FortniteInfo.CfgKeys }
             }
             $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}{3}' -f $applied, $adm, $script:ThemeName, $rv)
         }
@@ -272,7 +286,8 @@ function Show-HomePanel {
     $cards = @(
         @{ Key = 'modules'; Label = 'МОДУЛИ'; Value = ('{0} / {1}' -f $st.On, $st.Total); Hint = 'включено сейчас';  Accent = [RustSuite.Theme]::Accent },
         @{ Key = 'disk';    Label = 'СВОБОДНО'; Value = '—'; Hint = 'на системном диске'; Accent = [RustSuite.Theme]::Secondary },
-        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
+        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok },
+        @{ Key = 'fortnite'; Label = 'FORTNITE'; Value = $(if ($script:FortniteExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:FortniteExe -and $script:FortniteInfo -and $script:FortniteInfo.CfgReady) { 'cfg ' + $script:FortniteInfo.CfgKeys + ' · Epic Games' } elseif ($script:FortniteExe) { 'запустите игру один раз' } else { 'установите через Epic Games' }); Accent = [RustSuite.Theme]::Secondary }
     )
     $ci = 0
     foreach ($cd in $cards) {

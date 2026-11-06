@@ -1,6 +1,6 @@
 ﻿# ============================================================
-#  PURPLE RUSH - RUST PERFORMANCE ENGINE  v5.3
-#  Оптимизация Windows под RUST + официальные cfg/бинды +
+#  PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE  v7.0
+#  Оптимизация Windows под RUST и FORTNITE + официальные cfg/бинды +
 #  глубокая очистка, диагностика и восстановление Windows.
 #  Запуск: RustOptimizer.bat (права администратора)
 # ============================================================
@@ -9,7 +9,7 @@ param([switch]$SelfTest, [switch]$TestUi, [switch]$InstallShortcut, [switch]$Ver
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference    = 'SilentlyContinue'
 
-$script:AppVersion   = '6.2'
+$script:AppVersion   = '7.0'
 $script:Root         = Join-Path $env:ProgramData 'RustOptimizer'
 $script:LogFile      = Join-Path $script:Root 'rust-optimizer.log'
 $script:StateFile    = Join-Path $script:Root 'state.xml'
@@ -450,8 +450,8 @@ function Get-PhysicalCoreMask {
 #  Файлы Rust: бэкапы и слияние cfg
 # ============================================================
 function Backup-FileOnce {
-    param([string]$Path, [string]$Tag)
-    $dest = Join-Path $script:RustBackup ($Tag + '.orig')
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
+    $dest = Join-Path $Dir ($Tag + '.orig')
     if (Test-Path -LiteralPath $dest) { return $dest }
     if (Test-Path -LiteralPath $Path) {
         try { Copy-Item -LiteralPath $Path -Destination $dest -Force } catch {}
@@ -462,20 +462,20 @@ function Backup-FileOnce {
 }
 
 function Backup-FileStamp {
-    param([string]$Path, [string]$Tag)
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
     if (-not (Test-Path -LiteralPath $Path)) { return }
     try {
         $name = $Tag + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.bak'
-        Copy-Item -LiteralPath $Path -Destination (Join-Path $script:RustBackup $name) -Force
-        $old = @(Get-ChildItem -LiteralPath $script:RustBackup -Filter ($Tag + '-*.bak') -ErrorAction SilentlyContinue |
+        Copy-Item -LiteralPath $Path -Destination (Join-Path $Dir $name) -Force
+        $old = @(Get-ChildItem -LiteralPath $Dir -Filter ($Tag + '-*.bak') -ErrorAction SilentlyContinue |
                  Sort-Object LastWriteTime -Descending | Select-Object -Skip 10)
         foreach ($f in $old) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue }
     } catch {}
 }
 
 function Restore-FileOnce {
-    param([string]$Path, [string]$Tag)
-    $src = Join-Path $script:RustBackup ($Tag + '.orig')
+    param([string]$Path, [string]$Tag, [string]$Dir = $script:RustBackup)
+    $src = Join-Path $Dir ($Tag + '.orig')
     if (-not (Test-Path -LiteralPath $src)) { return $false }
     $text = ''
     try { $text = [IO.File]::ReadAllText($src) } catch { return $false }
@@ -576,7 +576,7 @@ function Install-AppShortcut {
         $sc.TargetPath       = $bat
         $sc.WorkingDirectory = $root
         if ($iconLoc) { $sc.IconLocation = $iconLoc }
-        $sc.Description      = 'PURPLE RUSH — RUST PERFORMANCE ENGINE'
+        $sc.Description      = 'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE'
         $sc.WindowStyle      = 1
         $sc.Save()
         return $lnk
@@ -3831,6 +3831,31 @@ $script:Tweaks = @(
         Name = 'Пауза Storage Sense'
         Desc = 'Windows не запускает фоновую автоочистку диска во время игры — меньше микрофризов на SSD/HDD.'
         Apply = { Invoke-StorageSenseOff }; Undo = { Undo-StorageSenseOff } }
+
+    [pscustomobject]@{ Id = 'fortnitecompat'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Честный полный экран Fortnite'
+        Desc = 'Отключает «оптимизации полного экрана» для FortniteClient-Win64-Shipping.exe — меньше инпут-лага.'
+        Apply = { Invoke-FortniteCompat }; Undo = { Undo-FortniteCompat } }
+
+    [pscustomobject]@{ Id = 'fortnitegpu'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Fortnite на дискретной видеокарте'
+        Desc = 'Явно привязывает клиент Fortnite к профилю «Высокая производительность» GPU Windows.'
+        Apply = { Invoke-FortniteGpu }; Undo = { Undo-FortniteGpu } }
+
+    [pscustomobject]@{ Id = 'fortniteprio'; Group = 'fortnite'; Risk = $false; Default = $true
+        Name = 'Приоритет Fortnite → High'
+        Desc = 'Повышает приоритет запущенного FortniteClient-Win64-Shipping.exe. Real-time не используется.'
+        Apply = { Invoke-FortnitePriority }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'fortniteaffinity'; Group = 'fortnite'; Risk = $true; Default = $false
+        Name = 'Fortnite только на физических ядрах'
+        Desc = 'Привязывает Fortnite к физическим ядрам без Hyper-Threading. На части CPU даёт минус — тестируйте.'
+        Apply = { Invoke-FortniteAffinity }; Undo = { } }
+
+    [pscustomobject]@{ Id = 'fortnitecfg'; Group = 'fortnite'; Risk = $false; Default = $false
+        Name = 'Fortnite: пресет максимального FPS'
+        Desc = 'Записывает официальные настройки меню игры в GameUserSettings.ini: эффекты на минимум, VSync off, полный экран. Нужен закрытый Fortnite.'
+        Apply = { Invoke-FortniteCfg }; Undo = { Undo-FortniteCfg } }
 )
 
 # Восстанавливаем выбор пользователя между запусками
@@ -4018,6 +4043,607 @@ $script:RustCfgDir  = $null
 $script:IsAdmin     = Test-Admin
 $script:RustRunning = Test-RustRunning
 $script:RustInfo    = Get-RustClientInfo
+
+# ============================================================
+#  FORTNITE: определение клиента, официальные настройки и модули
+#  Меняются только параметры меню игры (GameUserSettings.ini),
+#  реестр Windows и настройки GPU. Файлы клиента и EAC не трогаем.
+# ============================================================
+
+$script:FortniteExe        = $null
+$script:FortniteInstallDir = $null
+$script:FortniteCfgDir     = $null
+$script:FortniteInfo       = $null
+$script:FortniteRunning    = $false
+$script:FortniteBackup     = Join-Path $script:Root 'fortnitecfg'
+try { New-Item -ItemType Directory -Force -Path $script:FortniteBackup | Out-Null } catch {}
+
+# ---------- Поиск установленной игры ----------
+function Find-FortniteExe {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $exeRel = 'FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe'
+
+    # 1. Манифесты Epic Games Launcher: самый надёжный источник пути.
+    foreach ($m in @(
+        (Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'),
+        (Join-Path ${env:ProgramData} 'Epic\UnrealEngineLauncher\Data\Manifests'))) {
+        try {
+            foreach ($f in @(Get-ChildItem -LiteralPath $m -Filter '*.item' -File -ErrorAction SilentlyContinue)) {
+                try {
+                    $j = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json
+                    $name = [string]$j.DisplayName
+                    $app = [string]$j.AppName
+                    if ($name -match 'Fortnite' -or $app -match 'Fortnite') {
+                        $loc = [string]$j.InstallLocation
+                        if ($loc) { $candidates.Add((Join-Path $loc $exeRel)) }
+                    }
+                } catch {}
+            }
+        } catch {}
+    }
+
+    # 2. LauncherInstalled.dat — резервный список установок Epic.
+    try {
+        $li = Join-Path $env:ProgramData 'Epic\UnrealEngineLauncher\LauncherInstalled.dat'
+        if (Test-Path -LiteralPath $li) {
+            $j = Get-Content -LiteralPath $li -Raw -ErrorAction Stop | ConvertFrom-Json
+            foreach ($it in @($j.InstallationList)) {
+                if ([string]$it.AppName -match 'Fortnite' -and $it.InstallLocation) {
+                    $candidates.Add((Join-Path ([string]$it.InstallLocation) $exeRel))
+                }
+            }
+        }
+    } catch {}
+
+    # 3. Стандартные папки и другие диски.
+    foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, 'C:\Epic Games',
+                        'D:\Epic Games', 'E:\Epic Games', 'C:\Games', 'D:\Games', 'E:\Games')) {
+        if (-not $root) { continue }
+        $candidates.Add((Join-Path $root ('Fortnite\' + $exeRel)))
+    }
+    try {
+        foreach ($d in @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+            if (-not $d.Root) { continue }
+            $candidates.Add((Join-Path $d.Root ('Epic Games\Fortnite\' + $exeRel)))
+            $candidates.Add((Join-Path $d.Root ('Games\Fortnite\' + $exeRel)))
+        }
+    } catch {}
+
+    foreach ($p in $candidates) {
+        try { if ($p -and (Test-Path -LiteralPath $p)) { return [string]$p } } catch {}
+    }
+    return $null
+}
+
+function Get-FortniteCfgDir {
+    if ($script:FortniteCfgDir -and (Test-Path -LiteralPath $script:FortniteCfgDir)) {
+        return $script:FortniteCfgDir
+    }
+    $base = Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config'
+    foreach ($name in @('WindowsClient', 'Windows')) {
+        $p = Join-Path $base $name
+        if (Test-Path -LiteralPath $p) { $script:FortniteCfgDir = $p; return $p }
+    }
+    $script:FortniteCfgDir = Join-Path $base 'WindowsClient'
+    return $script:FortniteCfgDir
+}
+
+function Get-FortniteCfgFile {
+    $dir = Get-FortniteCfgDir
+    if (-not $dir) { return $null }
+    return (Join-Path $dir 'GameUserSettings.ini')
+}
+
+function Test-FortniteRunning {
+    try {
+        $p = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessName -like 'FortniteClient-Win64-Shipping*'
+        })
+        return ($p.Count -gt 0)
+    } catch { return $false }
+}
+
+# ---------- Сведения о клиенте ----------
+function Get-FortniteClientInfo {
+    $info = [pscustomobject]@{
+        Found       = $false
+        Exe         = ''
+        InstallDir  = ''
+        Version     = '—'
+        Build       = '—'
+        Updated     = '—'
+        Engine      = 'Unreal Engine 5'
+        Store       = 'Epic Games'
+        CfgReady    = $false
+        CfgPath     = ''
+        CfgKeys     = 0
+        Eac         = $false
+        EacPath     = ''
+    }
+    if (-not $script:FortniteExe -or -not (Test-Path -LiteralPath $script:FortniteExe)) { return $info }
+
+    $info.Found      = $true
+    $info.Exe        = [string]$script:FortniteExe
+    $info.InstallDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $script:FortniteExe)))
+    try {
+        $fi = Get-Item -LiteralPath $script:FortniteExe -Force
+        $vi = $fi.VersionInfo
+        $ver = [string]$vi.FileVersion
+        if (-not $ver) { $ver = [string]$vi.ProductVersion }
+        if ($ver) { $info.Version = $ver.Split('+')[0].Trim() }
+        $info.Build   = [string]$vi.ProductName
+        if (-not $info.Build) { $info.Build = 'Fortnite' }
+        $info.Updated = $fi.LastWriteTime.ToString('yyyy-MM-dd')
+    } catch {}
+
+    # Версия Epic-сборки лежит в манифесте лаунчера, а не в FileVersion.
+    if ($info.Version -eq '—') {
+        try {
+            foreach ($m in @(
+                (Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'),
+                (Join-Path ${env:ProgramData} 'Epic\UnrealEngineLauncher\Data\Manifests'))) {
+                foreach ($f in @(Get-ChildItem -LiteralPath $m -Filter '*.item' -File -ErrorAction SilentlyContinue)) {
+                    $j = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json
+                    if (([string]$j.InstallLocation).TrimEnd('\') -ne ([string]$info.InstallDir).TrimEnd('\')) { continue }
+                    $v = [string]$j.CompleteVersion
+                    if (-not $v) { $v = [string]$j.AppVersionString }
+                    if ($v -match 'Release-([0-9.]+)') { $info.Version = $matches[1] }
+                    elseif ($v) { $info.Version = $v }
+                    if (-not $info.Build -or $info.Build -eq 'Fortnite') {
+                        if ($v) { $info.Build = $v }
+                    }
+                    break
+                }
+            }
+        } catch {}
+    }
+
+    $cfg = Get-FortniteCfgFile
+    if ($cfg) {
+        $info.CfgPath = $cfg
+        if (Test-Path -LiteralPath $cfg) {
+            $info.CfgReady = $true
+            try {
+                $keys = @{}
+                foreach ($ln in @([IO.File]::ReadAllLines($cfg))) {
+                    $t = ([string]$ln).Trim()
+                    if (-not $t -or $t.StartsWith(';') -or $t.StartsWith('[')) { continue }
+                    $eq = $t.IndexOf('=')
+                    if ($eq -gt 0) { $keys[$t.Substring(0, $eq).Trim().ToLower()] = $true }
+                }
+                $info.CfgKeys = $keys.Count
+            } catch {}
+        }
+    }
+
+    $root = Split-Path -Parent $script:FortniteExe
+    foreach ($rel in @(
+        'EasyAntiCheat\EasyAntiCheat_EOS_Setup.exe',
+        'EasyAntiCheat\EasyAntiCheat_x64.dll',
+        'FortniteGame\Binaries\Win64\EasyAntiCheat\EasyAntiCheat_EOS_Setup.exe',
+        'FortniteGame\Binaries\Win64\EasyAntiCheat\EasyAntiCheat_x64.dll')) {
+        $p = Join-Path (Split-Path -Parent (Split-Path -Parent $root)) $rel
+        if (-not (Test-Path -LiteralPath $p)) { $p = Join-Path $root $rel }
+        if (Test-Path -LiteralPath $p) { $info.Eac = $true; $info.EacPath = $p; break }
+    }
+    if (-not $info.Eac) {
+        try {
+            $eac = Get-ChildItem -LiteralPath (Split-Path -Parent $root) -Filter 'EasyAntiCheat*' -Directory -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+            if ($eac) { $info.Eac = $true; $info.EacPath = $eac.FullName }
+        } catch {}
+    }
+    return $info
+}
+
+# ---------- Пресеты официальных настроек ----------
+$script:FortnitePresets = @(
+    [pscustomobject]@{
+        Key  = 'performance'
+        Name = 'МАКСИМАЛЬНЫЙ FPS'
+        Sub  = 'низкие эффекты · без VSync · полный экран'
+        Desc = 'Максимальная частота кадров и минимальная задержка: тени, эффекты и постобработка на минимуме, VSync выключен, полный экран. Все параметры есть в меню Fortnite.'
+        Blocks = @(
+            [pscustomobject]@{ Section = '[/Script/FortniteGame.FortGameUserSettings]'; Lines = @(
+                'FullscreenMode=0',
+                'LastConfirmedFullscreenMode=0',
+                'PreferredFullscreenMode=0',
+                'bUseVSync=False',
+                'bUseDynamicResolution=False',
+                'bMotionBlur=False',
+                'bShowFPS=True',
+                'bShowGrass=False',
+                'bUseNanite=False',
+                'bUseGPUCrashDebugging=False',
+                'FrameRateLimit=0.000000',
+                'FrontendFrameRateLimit=120.000000'
+            ) }
+            [pscustomobject]@{ Section = '[ScalabilityGroups]'; Lines = @(
+                'sg.ResolutionQuality=100',
+                'sg.ViewDistanceQuality=2',
+                'sg.AntiAliasingQuality=0',
+                'sg.ShadowQuality=0',
+                'sg.GlobalIlluminationQuality=0',
+                'sg.ReflectionQuality=0',
+                'sg.PostProcessQuality=0',
+                'sg.TextureQuality=2',
+                'sg.EffectsQuality=0',
+                'sg.FoliageQuality=0',
+                'sg.ShadingQuality=0',
+                'sg.LandscapeQuality=0'
+            ) }
+            [pscustomobject]@{ Section = '[PerformanceMode]'; Lines = @('MeshQuality=0') }
+        )
+    }
+    [pscustomobject]@{
+        Key  = 'balanced'
+        Name = 'БАЛАНС'
+        Sub  = 'чисто · стабильно · без мыла'
+        Desc = 'Компромисс между картинкой и FPS: средние тени и эффекты, дальность прорисовки выше, VSync выключен, без сглаживания. Подходит для 144 Гц.'
+        Blocks = @(
+            [pscustomobject]@{ Section = '[/Script/FortniteGame.FortGameUserSettings]'; Lines = @(
+                'bUseVSync=False',
+                'bUseDynamicResolution=False',
+                'bMotionBlur=False',
+                'bShowFPS=True',
+                'bShowGrass=True',
+                'bUseNanite=False',
+                'FrameRateLimit=165.000000',
+                'FrontendFrameRateLimit=120.000000'
+            ) }
+            [pscustomobject]@{ Section = '[ScalabilityGroups]'; Lines = @(
+                'sg.ResolutionQuality=100',
+                'sg.ViewDistanceQuality=2',
+                'sg.AntiAliasingQuality=1',
+                'sg.ShadowQuality=1',
+                'sg.GlobalIlluminationQuality=1',
+                'sg.ReflectionQuality=1',
+                'sg.PostProcessQuality=1',
+                'sg.TextureQuality=2',
+                'sg.EffectsQuality=1',
+                'sg.FoliageQuality=1',
+                'sg.ShadingQuality=1',
+                'sg.LandscapeQuality=1'
+            ) }
+            [pscustomobject]@{ Section = '[PerformanceMode]'; Lines = @('MeshQuality=1') }
+        )
+    }
+    [pscustomobject]@{
+        Key  = 'quality'
+        Name = 'КАЧЕСТВО'
+        Sub  = 'максимум деталей · 165 FPS'
+        Desc = 'Максимальные тени, сглаживание, отражения и растительность при FrameRateLimit 165. VSync и размытие движения выключены для отклика.'
+        Blocks = @(
+            [pscustomobject]@{ Section = '[/Script/FortniteGame.FortGameUserSettings]'; Lines = @(
+                'bUseVSync=False',
+                'bUseDynamicResolution=False',
+                'bMotionBlur=False',
+                'bShowFPS=True',
+                'bShowGrass=True',
+                'bUseNanite=False',
+                'FrameRateLimit=165.000000',
+                'FrontendFrameRateLimit=120.000000'
+            ) }
+            [pscustomobject]@{ Section = '[ScalabilityGroups]'; Lines = @(
+                'sg.ResolutionQuality=100',
+                'sg.ViewDistanceQuality=3',
+                'sg.AntiAliasingQuality=3',
+                'sg.ShadowQuality=3',
+                'sg.GlobalIlluminationQuality=3',
+                'sg.ReflectionQuality=3',
+                'sg.PostProcessQuality=3',
+                'sg.TextureQuality=3',
+                'sg.EffectsQuality=3',
+                'sg.FoliageQuality=3',
+                'sg.ShadingQuality=3',
+                'sg.LandscapeQuality=3'
+            ) }
+            [pscustomobject]@{ Section = '[PerformanceMode]'; Lines = @('MeshQuality=1') }
+        )
+    }
+)
+
+function Get-FortnitePreset {
+    param([string]$Key)
+    $p = @($script:FortnitePresets | Where-Object { $_.Key -eq $Key } | Select-Object -First 1)
+    if ($p.Count -eq 0) { $p = @($script:FortnitePresets | Select-Object -First 1) }
+    return $p[0]
+}
+
+function Get-FortnitePresetName {
+    param([string]$Key)
+    if (-not $Key) { return '—' }
+    return [string](Get-FortnitePreset $Key).Name
+}
+
+function Get-FortniteCfgStatusText {
+    $key = [string]$script:State['FortnitePreset']
+    $pending = [string]$script:State['FortnitePending']
+    if ($pending) { return ('пресет ' + (Get-FortnitePresetName $pending) + ' · запишется после закрытия игры') }
+    if ($key) { return ('пресет ' + (Get-FortnitePresetName $key)) }
+    return 'настройки не изменялись'
+}
+
+# ---------- Слияние INI без потери чужих параметров ----------
+function Merge-IniFile {
+    param([string]$Path, [string]$Section, [string[]]$Lines)
+
+    $target = [string]$Section
+    if (-not $target.StartsWith('[')) { $target = '[' + $target.Trim('[', ']') + ']' }
+    $existing = @()
+    if (Test-Path -LiteralPath $Path) {
+        try { $existing = @([IO.File]::ReadAllLines($Path)) } catch { $existing = @() }
+    }
+
+    $values  = @{}
+    $managed = New-Object System.Collections.Generic.List[string]
+    foreach ($l in @($Lines)) {
+        $t = ([string]$l).Trim()
+        if (-not $t) { continue }
+        $eq = $t.IndexOf('=')
+        if ($eq -lt 1) { continue }
+        $k = $t.Substring(0, $eq).Trim()
+        $values[$k.ToLower()] = $t
+        $managed.Add($k.ToLower())
+    }
+
+    $start = -1
+    $end   = $existing.Count
+    for ($i = 0; $i -lt $existing.Count; $i++) {
+        $t = ([string]$existing[$i]).Trim()
+        if ($t.StartsWith('[') -and $t.EndsWith(']')) {
+            if ($start -ge 0) { $end = $i; break }
+            if ($t -ieq $target) { $start = $i }
+        }
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($start -lt 0) {
+        foreach ($l in $existing) { $out.Add([string]$l) }
+        if ($out.Count -gt 0 -and $out[$out.Count - 1].Trim().Length -gt 0) { $out.Add('') }
+        $out.Add($target)
+        foreach ($k in $managed) { $out.Add([string]$values[$k]) }
+    } else {
+        for ($i = 0; $i -le $start; $i++) { $out.Add([string]$existing[$i]) }
+        $seen = @{}
+        for ($i = $start + 1; $i -lt $end; $i++) {
+            $line = [string]$existing[$i]
+            $t = $line.Trim()
+            $eq = $t.IndexOf('=')
+            if ($eq -gt 0) {
+                $key = $t.Substring(0, $eq).Trim().ToLower()
+                if ($values.ContainsKey($key)) {
+                    if (-not $seen.ContainsKey($key)) {
+                        $out.Add([string]$values[$key])
+                        $seen[$key] = $true
+                    }
+                    continue
+                }
+            }
+            $out.Add($line)
+        }
+        foreach ($k in $managed) {
+            if (-not $seen.ContainsKey($k)) { $out.Add([string]$values[$k]) }
+        }
+        for ($i = $end; $i -lt $existing.Count; $i++) { $out.Add([string]$existing[$i]) }
+    }
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    [IO.File]::WriteAllLines($Path, $out, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# ---------- Применение, откат и отложенная запись ----------
+function Set-FortniteCfgPreset {
+    param([string]$Key)
+    $p = Get-FortnitePreset $Key
+    if (Test-FortniteRunning) {
+        $script:State['FortnitePending'] = $p.Key
+        Save-State
+        return [pscustomobject]@{ Ok = $false; Pending = $true
+            Message = ('Fortnite запущен: настройки «' + $p.Name + '» запишутся автоматически после закрытия игры.') }
+    }
+    $file = Get-FortniteCfgFile
+    if (-not $file) {
+        return [pscustomobject]@{ Ok = $false; Pending = $false; Message = 'Не удалось найти папку настроек Fortnite.' }
+    }
+    if (Test-Path -LiteralPath $file) {
+        $null = Backup-FileOnce $file 'fortnite-gus' $script:FortniteBackup
+        Backup-FileStamp $file 'fortnite-gus' $script:FortniteBackup
+    } else {
+        $dir = Split-Path -Parent $file
+        try { New-Item -ItemType Directory -Force -Path $dir | Out-Null } catch {}
+        $null = Backup-FileOnce $file 'fortnite-gus' $script:FortniteBackup
+    }
+    try {
+        foreach ($block in @($p.Blocks)) {
+            Merge-IniFile -Path $file -Section ([string]$block.Section) -Lines @($block.Lines)
+        }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Pending = $false; Message = ('Не удалось записать GameUserSettings.ini: ' + $_.Exception.Message) }
+    }
+    $script:State['FortnitePreset'] = $p.Key
+    $script:State['FortniteAt'] = (Get-Date).ToString('s')
+    $script:State.Remove('FortnitePending')
+    Save-State
+    Write-Log ('FORTNITE: применён пресет «' + $p.Name + '» (официальные настройки, бэкап сохранён)') 'ok'
+    return [pscustomobject]@{ Ok = $true; Pending = $false
+        Message = ('Fortnite: применён пресет «' + $p.Name + '». Бэкап: ' + $script:FortniteBackup) }
+}
+
+function Update-PendingFortniteCfg {
+    try {
+        $key = [string]$script:State['FortnitePending']
+        if (-not $key) { return $false }
+        if (Test-FortniteRunning) { return $false }
+        $r = Set-FortniteCfgPreset $key
+        if ($r.Ok) {
+            Write-Log ('FORTNITE: отложенный пресет «' + (Get-FortnitePresetName $key) + '» записан после закрытия игры') 'ok'
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+function Undo-FortniteCfg {
+    if (Test-FortniteRunning) {
+        return [pscustomobject]@{ Ok = $false; Message = 'Fortnite запущен. Закройте игру и повторите откат.' }
+    }
+    $file = Get-FortniteCfgFile
+    if (-not $file) {
+        return [pscustomobject]@{ Ok = $false; Message = 'Настройки Fortnite не найдены.' }
+    }
+    if (Restore-FileOnce $file 'fortnite-gus' $script:FortniteBackup) {
+        $script:State.Remove('FortnitePreset')
+        $script:State.Remove('FortniteAt')
+        $script:State.Remove('FortnitePending')
+        Save-State
+        Write-Log 'FORTNITE: исходный GameUserSettings.ini восстановлен' 'ok'
+        return [pscustomobject]@{ Ok = $true; Message = 'Исходные настройки Fortnite восстановлены.' }
+    }
+    return [pscustomobject]@{ Ok = $false; Message = 'Резервная копия настроек Fortnite не найдена.' }
+}
+
+function Invoke-FortniteCfg {
+    $r = Set-FortniteCfgPreset 'performance'
+    if (-not $r.Ok -and -not $r.Pending) { throw $r.Message }
+    if ($r.Pending) { Write-Log $r.Message 'info' }
+}
+
+# ---------- Windows / GPU / процесс ----------
+function Invoke-FortniteCompat {
+    if (-not $script:FortniteExe) { throw 'FORTNITE не найден — оптимизация совместимости пропущена' }
+    $k = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
+    Ensure-RegKey $k
+    $old = Get-Reg $k $script:FortniteExe
+    if (-not $script:State.ContainsKey('FortniteCompatOld')) {
+        $script:State['FortniteCompatOld'] = if ($null -eq $old) { '' } else { [string]$old }
+    }
+    $val = '~ DISABLEDXMAXIMIZEDWINDOWEDMODE'
+    if ($old -and ([string]$old).Trim().Length -gt 0) {
+        if (([string]$old) -notmatch 'DISABLEDXMAXIMIZEDWINDOWEDMODE') {
+            $val = ([string]$old).TrimEnd() + ' DISABLEDXMAXIMIZEDWINDOWEDMODE'
+        } else { $val = [string]$old }
+    }
+    Set-RegStr $k $script:FortniteExe $val
+    Write-Log 'Оптимизации полного экрана для Fortnite отключены' 'ok'
+}
+
+function Undo-FortniteCompat {
+    if (-not $script:FortniteExe) { return }
+    $k = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
+    $old = [string]$script:State['FortniteCompatOld']
+    if ($old) { Set-RegStr $k $script:FortniteExe $old }
+    else { Remove-RegValue $k $script:FortniteExe }
+    Write-Log 'Параметры совместимости Fortnite восстановлены' 'ok'
+}
+
+function Invoke-FortniteGpu {
+    if (-not $script:FortniteExe) { throw 'FORTNITE не найден — привязка к GPU пропущена' }
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    Ensure-RegKey $k
+    $old = Get-Reg $k $script:FortniteExe
+    if (-not $script:State.ContainsKey('FortniteGpuOld')) {
+        $script:State['FortniteGpuOld'] = if ($null -eq $old) { '' } else { [string]$old }
+    }
+    $parts = @()
+    if ($old) {
+        foreach ($p in ([string]$old).Split(';')) {
+            $t = $p.Trim()
+            if (-not $t) { continue }
+            if ($t -match '^GpuPreference\s*=') { continue }
+            $parts += $t
+        }
+    }
+    $parts += 'GpuPreference=2'
+    Set-RegStr $k $script:FortniteExe (($parts -join ';') + ';')
+    Write-Log 'Fortnite → «Высокая производительность» GPU (прочие флаги сохранены)' 'ok'
+}
+
+function Undo-FortniteGpu {
+    if (-not $script:FortniteExe) { return }
+    $k = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
+    $old = [string]$script:State['FortniteGpuOld']
+    if ($old) { Set-RegStr $k $script:FortniteExe $old }
+    else { Remove-RegValue $k $script:FortniteExe }
+    Write-Log 'Привязка GPU для Fortnite восстановлена' 'ok'
+}
+
+function Get-FortniteProcesses {
+    try {
+        return @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ProcessName -like 'FortniteClient-Win64-Shipping*'
+        })
+    } catch { return @() }
+}
+
+function Invoke-FortnitePriority {
+    $p = @(Get-FortniteProcesses)
+    if ($p.Count -eq 0) { Write-Log 'Fortnite не запущен — приоритет применится при старте' 'info'; return }
+    foreach ($x in $p) { try { $x.PriorityClass = 'High' } catch {} }
+    Write-Log 'Приоритет запущенного Fortnite → High' 'ok'
+}
+
+function Invoke-FortniteAffinity {
+    $mask = Get-PhysicalCoreMask
+    if ($mask -eq 0) { throw 'Не удалось определить физические ядра' }
+    $p = @(Get-FortniteProcesses)
+    if ($p.Count -eq 0) { Write-Log 'Fortnite не запущен — привязка к ядрам применится при старте' 'info'; return }
+    foreach ($x in $p) { try { $x.ProcessorAffinity = [IntPtr]$mask } catch {} }
+    Write-Log ('Fortnite привязан к физическим ядрам (маска 0x{0:X})' -f $mask) 'ok'
+}
+
+function Invoke-FortniteProcessPolish {
+    $p = @(Get-FortniteProcesses)
+    if ($p.Count -eq 0) { return }
+    foreach ($x in $p) {
+        try { $x.PriorityClass = 'High' } catch {}
+        if ($script:Enabled['fortniteaffinity']) {
+            $mask = Get-PhysicalCoreMask
+            if ($mask -ne 0) { try { $x.ProcessorAffinity = [IntPtr]$mask } catch {} }
+        }
+    }
+}
+
+# ---------- Текст отчёта для страницы ----------
+function Get-FortniteCompatText {
+    $ri = Get-FortniteClientInfo
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (-not $ri.Found) {
+        $lines.Add('FORTNITE не найден.')
+        $lines.Add('')
+        $lines.Add('Установите игру через Epic Games Launcher и запустите её один раз —')
+        $lines.Add('появится GameUserSettings.ini, после чего станут доступны пресеты.')
+        return ($lines -join "`r`n")
+    }
+    $lines.Add('FORTNITE · ' + $ri.Version)
+    $lines.Add('Клиент: ' + $ri.Exe)
+    $lines.Add('Обновлён: ' + $ri.Updated + '   ·   движок: ' + $ri.Engine)
+    $lines.Add('Конфиг: ' + $(if ($ri.CfgReady) { [string]$ri.CfgKeys + ' ключей' } else { 'появится после первого запуска' }))
+    $lines.Add('EasyAntiCheat: ' + $(if ($ri.Eac) { 'найден, не изменяется' } else { 'не найден' }))
+    $lines.Add('')
+    $lines.Add('Доступные пресеты (только параметры меню игры):')
+    foreach ($p in @($script:FortnitePresets)) {
+        $lines.Add('  · ' + $p.Name + ' — ' + $p.Desc)
+    }
+    $lines.Add('')
+    $lines.Add('Сейчас: ' + (Get-FortniteCfgStatusText) + '.')
+    $lines.Add('Бэкап: ' + $script:FortniteBackup)
+    $lines.Add('')
+    $lines.Add('Безопасность: exe/dll клиента и файлы EAC не изменяются.')
+    $lines.Add('Меняются только официальные настройки игры, реестр Windows и профиль GPU.')
+    return ($lines -join "`r`n")
+}
+
+# ============================================================
+#  ОКРУЖЕНИЕ FORTNITE
+# ============================================================
+$script:FortniteExe        = Find-FortniteExe
+$script:FortniteInstallDir = $(if ($script:FortniteExe) {
+    Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $script:FortniteExe)))
+} else { $null })
+$script:FortniteRunning    = Test-FortniteRunning
+$script:FortniteInfo       = Get-FortniteClientInfo
 
 # ============================================================
 #  ТЕМА И АНИМИРОВАННЫЕ КОНТРОЛЫ (C#)
@@ -6487,6 +7113,16 @@ function Update-HomeLive {
                     }
                 } else { $rc.SetValue('НЕ НАЙДЕН') }
             }
+            $fc = $script:HomeCards['fortnite']
+            if ($fc -and -not $fc.IsDisposed) {
+                if ($script:FortniteExe) {
+                    if ($script:FortniteRunning) { $fc.SetValue('ЗАПУЩЕН') }
+                    else { $fc.SetValue('НАЙДЕН') }
+                    if ($script:FortniteInfo -and $script:FortniteInfo.CfgReady) {
+                        $fc.SetHint('cfg ' + $script:FortniteInfo.CfgKeys + ' · ' + (Get-FortniteCfgStatusText))
+                    }
+                } else { $fc.SetValue('НЕ НАЙДЕН') }
+            }
         }
 
         if ($script:HomeStatusLbl -and -not $script:HomeStatusLbl.IsDisposed) {
@@ -6496,6 +7132,10 @@ function Update-HomeLive {
             if ($script:RustInfo -and $script:RustInfo.Found -and $script:RustInfo.Unity) {
                 $rv = '   ·   RUST ' + $script:RustInfo.Unity
                 if ($script:RustInfo.CfgReady) { $rv += ' · cfg ' + $script:RustInfo.CfgKeys }
+            }
+            if ($script:FortniteInfo -and $script:FortniteInfo.Found) {
+                $rv += '   ·   FORTNITE ' + $script:FortniteInfo.Version
+                if ($script:FortniteInfo.CfgReady) { $rv += ' · cfg ' + $script:FortniteInfo.CfgKeys }
             }
             $script:HomeStatusLbl.Text = ('Применено модулей: {0}   ·   {1}   ·   тема: {2}{3}' -f $applied, $adm, $script:ThemeName, $rv)
         }
@@ -6628,7 +7268,8 @@ function Show-HomePanel {
     $cards = @(
         @{ Key = 'modules'; Label = 'МОДУЛИ'; Value = ('{0} / {1}' -f $st.On, $st.Total); Hint = 'включено сейчас';  Accent = [RustSuite.Theme]::Accent },
         @{ Key = 'disk';    Label = 'СВОБОДНО'; Value = '—'; Hint = 'на системном диске'; Accent = [RustSuite.Theme]::Secondary },
-        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok }
+        @{ Key = 'rust';    Label = 'RUST'; Value = $(if ($script:RustExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:RustExe -and $script:RustInfo -and $script:RustInfo.Unity) { 'Unity ' + $script:RustInfo.Unity + ' · cfg готов' } elseif ($script:RustExe) { 'cfg доступен' } else { 'запустите игру через Steam' }); Accent = [RustSuite.Theme]::Ok },
+        @{ Key = 'fortnite'; Label = 'FORTNITE'; Value = $(if ($script:FortniteExe) { 'НАЙДЕН' } else { 'НЕ НАЙДЕН' }); Hint = $(if ($script:FortniteExe -and $script:FortniteInfo -and $script:FortniteInfo.CfgReady) { 'cfg ' + $script:FortniteInfo.CfgKeys + ' · Epic Games' } elseif ($script:FortniteExe) { 'запустите игру один раз' } else { 'установите через Epic Games' }); Accent = [RustSuite.Theme]::Secondary }
     )
     $ci = 0
     foreach ($cd in $cards) {
@@ -6728,6 +7369,7 @@ if ($SelfTest) {
     Write-Host ("Admin      : " + $script:IsAdmin)
     Write-Host ("Steam      : " + $(if ($script:SteamPath) { $script:SteamPath } else { '<not found>' }))
     Write-Host ("Rust       : " + $(if ($script:RustExe) { $script:RustExe } else { '<not found>' }))
+    Write-Host ("Fortnite   : " + $(if ($script:FortniteExe) { $script:FortniteExe } else { '<not found>' }))
     Write-Host ("Cfg dir    : " + $(if ($script:RustExe) { [string](Get-RustCfgDir) } else { '<n/a>' }))
     Write-Host ("Tweaks     : " + $script:Tweaks.Count)
     Write-Host ("Core mask  : 0x" + ('{0:X}' -f (Get-PhysicalCoreMask)))
@@ -6969,6 +7611,51 @@ if ($SelfTest) {
         Write-Host ('PICTURE CHECK ERROR: ' + $_.Exception.Message); $fail++
         Write-Host ([string]$_.ScriptStackTrace)
     }
+
+    # ---------- FORTNITE: пресеты и официальный INI ----------
+    foreach ($fn in 'Find-FortniteExe', 'Get-FortniteCfgDir', 'Get-FortniteCfgFile',
+                    'Test-FortniteRunning', 'Get-FortniteClientInfo', 'Get-FortnitePreset',
+                    'Get-FortnitePresetName', 'Get-FortniteCfgStatusText', 'Merge-IniFile',
+                    'Set-FortniteCfgPreset', 'Update-PendingFortniteCfg', 'Undo-FortniteCfg',
+                    'Invoke-FortniteCfg', 'Invoke-FortniteCompat', 'Undo-FortniteCompat',
+                    'Invoke-FortniteGpu', 'Undo-FortniteGpu', 'Invoke-FortnitePriority',
+                    'Invoke-FortniteAffinity', 'Invoke-FortniteProcessPolish', 'Get-FortniteCompatText') {
+        if (-not (Get-Command -Name $fn -CommandType Function -ErrorAction SilentlyContinue)) {
+            Write-Host ('MISSING FORTNITE FUNCTION: ' + $fn); $fail++
+        }
+    }
+    foreach ($id in 'fortnitecompat', 'fortnitegpu', 'fortniteprio', 'fortniteaffinity', 'fortnitecfg') {
+        if (-not @($script:Tweaks | Where-Object { $_.Id -eq $id }).Count) {
+            Write-Host ('MISSING FORTNITE TWEAK: ' + $id); $fail++
+        }
+    }
+    try {
+        if (@($script:FortnitePresets).Count -lt 3) { Write-Host 'FORTNITE PRESETS MISSING'; $fail++ }
+        $fpKeys = @($script:FortnitePresets | ForEach-Object { [string]$_.Key })
+        if (@($fpKeys | Select-Object -Unique).Count -ne $fpKeys.Count) {
+            Write-Host 'DUPLICATE FORTNITE PRESET KEYS'; $fail++
+        }
+        foreach ($p in @($script:FortnitePresets)) {
+            if (@($p.Blocks).Count -lt 3) { Write-Host ('FORTNITE PRESET BLOCKS BROKEN: ' + $p.Key); $fail++ }
+        }
+
+        # Слияние INI: значения заменяются, чужие ключи и секции сохраняются.
+        $tmpIni = Join-Path $env:TEMP ('rustopt-fn-' + [Guid]::NewGuid().ToString('N') + '.ini')
+        $ini = "[/Script/FortniteGame.FortGameUserSettings]`r`nFrameRateLimit=60.000000`r`nkeep.me=1`r`n`r`n[ScalabilityGroups]`r`nsg.ShadowQuality=3`r`nkeep.other=2`r`n"
+        [IO.File]::WriteAllText($tmpIni, $ini, (New-Object System.Text.UTF8Encoding($false)))
+        Merge-IniFile -Path $tmpIni -Section '[/Script/FortniteGame.FortGameUserSettings]' -Lines @('FrameRateLimit=0.000000', 'bUseVSync=False')
+        Merge-IniFile -Path $tmpIni -Section '[ScalabilityGroups]' -Lines @('sg.ShadowQuality=0', 'sg.ViewDistanceQuality=2')
+        $outIni = [IO.File]::ReadAllText($tmpIni)
+        if ($outIni -notmatch 'FrameRateLimit=0\.000000') { Write-Host 'FORTNITE INI REPLACE FAILED'; $fail++ }
+        if ($outIni -notmatch 'bUseVSync=False') { Write-Host 'FORTNITE INI APPEND FAILED'; $fail++ }
+        if (([regex]::Matches($outIni, 'FrameRateLimit=')).Count -ne 1) { Write-Host 'FORTNITE INI DUPLICATE KEY'; $fail++ }
+        if ($outIni -notmatch 'keep\.me=1') { Write-Host 'FORTNITE INI LOST FOREIGN KEY'; $fail++ }
+        if ($outIni -notmatch 'sg\.ShadowQuality=0') { Write-Host 'FORTNITE INI SECTION REPLACE FAILED'; $fail++ }
+        if ($outIni -notmatch 'sg\.ViewDistanceQuality=2') { Write-Host 'FORTNITE INI SECTION APPEND FAILED'; $fail++ }
+        if ($outIni -notmatch 'keep\.other=2') { Write-Host 'FORTNITE INI LOST OTHER SECTION KEY'; $fail++ }
+        Remove-Item -LiteralPath $tmpIni -Force -ErrorAction SilentlyContinue
+        if (-not (Get-FortniteCompatText)) { Write-Host 'FORTNITE COMPAT TEXT EMPTY'; $fail++ }
+    } catch { Write-Host ('FORTNITE CHECK ERROR: ' + $_.Exception.Message); $fail++ }
 
     # Валидация биндов
     $oldBinds = $script:State['Binds']
@@ -7901,7 +8588,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $script:MainForm     = $form
-$form.Text            = 'PURPLE RUSH — RUST PERFORMANCE ENGINE'
+$form.Text            = 'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE'
 $form.StartPosition   = 'CenterScreen'
 $form.FormBorderStyle = 'Sizable'
 $form.MaximizeBox     = $false
@@ -8006,8 +8693,8 @@ $header.Add_Paint({
         $tf = [System.Windows.Forms.TextFormatFlags]::NoPadding
 
         $f  = [RustSuite.Theme]::FTitle
-        $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST', $f).Width
-        [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST', $f,
+        $w1 = [System.Windows.Forms.TextRenderer]::MeasureText('RUST / FORTNITE', $f).Width
+        [System.Windows.Forms.TextRenderer]::DrawText($g, 'RUST / FORTNITE', $f,
             [System.Drawing.Point]::new((S 26), (S 15)), [RustSuite.Theme]::Accent, $tf)
         $w2 = [System.Windows.Forms.TextRenderer]::MeasureText('PERFORMANCE SUITE', $f).Width
         [System.Windows.Forms.TextRenderer]::DrawText($g, 'PERFORMANCE SUITE', $f,
@@ -8035,7 +8722,7 @@ $header.Add_Paint({
                 [RustSuite.Theme]::AccentLt, $vcf)
         }
 
-        $sub = 'оптимизация Windows под RUST   ·   журнал: ProgramData\RustOptimizer'
+        $sub = 'оптимизация Windows под RUST и FORTNITE   ·   журнал: ProgramData\RustOptimizer'
         [System.Windows.Forms.TextRenderer]::DrawText($g, $sub, [RustSuite.Theme]::FSub,
             [System.Drawing.Point]::new((S 28), (S 70)), [RustSuite.Theme]::Muted, $tf)
 
@@ -8056,14 +8743,19 @@ $header.Add_Paint({
               [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $chip, [RustSuite.Theme]::FSmall, $crect, $ccol, $cf)
 
-        $rst = if (-not $script:RustExe) { 'RUST НЕ НАЙДЕН' }
-               elseif ($script:RustRunning) { 'RUST ЗАПУЩЕН' }
-               else { 'RUST ГОТОВ' }
-        $rc  = if (-not $script:RustExe) { [RustSuite.Theme]::Warn }
-               elseif ($script:RustRunning) { [RustSuite.Theme]::AccentLt }
+        $rsParts = @()
+        if (-not $script:RustExe) { $rsParts += 'RUST НЕ НАЙДЕН' }
+        elseif ($script:RustRunning) { $rsParts += 'RUST ЗАПУЩЕН' }
+        else { $rsParts += 'RUST ГОТОВ' }
+        if (-not $script:FortniteExe) { $rsParts += 'FORTNITE НЕ НАЙДЕН' }
+        elseif ($script:FortniteRunning) { $rsParts += 'FORTNITE ЗАПУЩЕН' }
+        else { $rsParts += 'FORTNITE ГОТОВ' }
+        $rst = ($rsParts -join '   ·   ')
+        $rc  = if ($script:RustRunning -or $script:FortniteRunning) { [RustSuite.Theme]::AccentLt }
+               elseif (-not $script:RustExe -or -not $script:FortniteExe) { [RustSuite.Theme]::Warn }
                else { [RustSuite.Theme]::Ok }
         $rsz = [System.Windows.Forms.TextRenderer]::MeasureText($rst, [RustSuite.Theme]::FSmall)
-        $rrect = [System.Drawing.Rectangle]::new(($s.Width - $cw - (S 26)), (S 50), $cw, (S 20))
+        $rrect = [System.Drawing.Rectangle]::new(($s.Width - [Math]::Max($cw, ($rsz.Width + (S 20))) - (S 26)), (S 50), [Math]::Max($cw, ($rsz.Width + (S 20))), (S 20))
         $rf = [System.Windows.Forms.TextFormatFlags]::Right -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
         [System.Windows.Forms.TextRenderer]::DrawText($g, $rst, [RustSuite.Theme]::FSmall, $rrect, $rc, $rf)
         $line = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(70, [RustSuite.Theme]::Accent)), 1
@@ -8084,7 +8776,7 @@ $footer.Add_Paint({
     $e.Graphics.DrawLine($pen, 0, 0, $s.Width, 0)
     $pen.Dispose()
     try {
-        $hint = 'Ctrl+1…9 — разделы    ·    Ctrl+R — обновить статистику'
+        $hint = 'Ctrl+1…9, Ctrl+0 — разделы    ·    Ctrl+R — обновить статистику'
         $hr   = New-Object System.Drawing.Rectangle 0, ($s.Height - (S 24)), ($s.Width - (S 26)), (S 18)
         [System.Windows.Forms.TextRenderer]::DrawText($e.Graphics, $hint,
             [RustSuite.Theme]::FSmall, $hr,
@@ -8181,20 +8873,21 @@ $navTop = New-Object System.Windows.Forms.Panel
 $script:NavTopPanel = $navTop
 $navTop.Dock       = 'Fill'
 $navTop.BackColor  = [RustSuite.Theme]::Bg
-# При минимальной высоте окна восемь пунктов не помещаются —
+# При минимальной высоте окна пункты меню не помещаются —
 # включаем прокрутку вместо наложения на блок «ПРОФИЛИ».
 $navTop.AutoScroll = $true
 $navScrollWrap.Controls.Add($navTop)
 
 $script:Groups = @(
-    @{ Id = 'home';    Glyph = '◉'; Title = 'ОБЗОР';    Sub = 'оценка и быстрые действия' },
-    @{ Id = 'sys';     Glyph = '◆'; Title = 'СИСТЕМА';  Sub = 'питание и приоритеты' },
-    @{ Id = 'net';     Glyph = '↔'; Title = 'СЕТЬ';     Sub = 'пинг и пакеты' },
-    @{ Id = 'rust';    Glyph = '▶'; Title = 'RUST';     Sub = 'профиль игры' },
-    @{ Id = 'picture'; Glyph = '◐'; Title = 'КАРТИНКА'; Sub = 'цвет и панель GPU' },
-    @{ Id = 'binds';   Glyph = '⌨'; Title = 'БИНДЫ';    Sub = 'keys.cfg одной кнопкой' },
-    @{ Id = 'clean';   Glyph = '✦'; Title = 'ОЧИСТКА';  Sub = 'мусор и фоновые' },
-    @{ Id = 'repair';  Glyph = '◈'; Title = 'РЕМОНТ';   Sub = 'проверка и лечение Windows' },
+    @{ Id = 'home';     Glyph = '◉'; Title = 'ОБЗОР';     Sub = 'оценка и быстрые действия' },
+    @{ Id = 'sys';      Glyph = '◆'; Title = 'СИСТЕМА';   Sub = 'питание и приоритеты' },
+    @{ Id = 'net';      Glyph = '↔'; Title = 'СЕТЬ';      Sub = 'пинг и пакеты' },
+    @{ Id = 'rust';     Glyph = '▶'; Title = 'RUST';      Sub = 'профиль игры' },
+    @{ Id = 'fortnite'; Glyph = '✦'; Title = 'FORTNITE';  Sub = 'профиль игры и FPS' },
+    @{ Id = 'picture';  Glyph = '◐'; Title = 'КАРТИНКА';  Sub = 'цвет и панель GPU' },
+    @{ Id = 'binds';    Glyph = '⌨'; Title = 'БИНДЫ';     Sub = 'keys.cfg одной кнопкой' },
+    @{ Id = 'clean';    Glyph = '✧'; Title = 'ОЧИСТКА';   Sub = 'мусор и фоновые' },
+    @{ Id = 'repair';   Glyph = '◈'; Title = 'РЕМОНТ';    Sub = 'проверка и лечение Windows' },
     @{ Id = 'settings'; Glyph = '⚙'; Title = 'НАСТРОЙКИ'; Sub = 'темы и мониторинг' }
 )
 
@@ -8210,7 +8903,8 @@ foreach ($grp in $script:Groups) {
     $b.Tag    = $grp.Id
     $b.Bounds = [System.Drawing.Rectangle]::new(0, (S (2 + $i * 40)), (S 176), (S 36))
     $b.Add_Click({ param($s, $e) Request-Group $s.Tag })
-    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`nCtrl+" + ($i + 1))) } catch {}
+    $hk = if ($i -eq 9) { 'Ctrl+0' } else { 'Ctrl+' + ($i + 1) }
+    try { $script:NavTip.SetToolTip($b, ($grp.Title + ' — ' + $grp.Sub + "`n" + $hk)) } catch {}
     $script:NavButtons[$grp.Id] = $b
     $navTop.Controls.Add($b)
     $i = $i + 1
@@ -8256,7 +8950,7 @@ $rightCol.ColumnCount = 1
 $rightCol.RowCount    = 2
 $rightCol.BackColor   = [RustSuite.Theme]::PanelBg
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
-    [System.Windows.Forms.SizeType]::Absolute, (S 168))))
+    [System.Windows.Forms.SizeType]::Absolute, (S 190))))
 [void]$rightCol.RowStyles.Add((New-Object System.Windows.Forms.RowStyle(
     [System.Windows.Forms.SizeType]::Percent, 100)))
 
@@ -8294,6 +8988,7 @@ $script:CpuVal = New-MetricLabel '—' (S 190) (S 30) (S 170) ([RustSuite.Theme]
 $script:RamVal = New-MetricLabel '—' (S 190) (S 66) (S 170) ([RustSuite.Theme]::TextC)
 $script:DiskVal = New-MetricLabel '—' (S 190) (S 102) (S 170) ([RustSuite.Theme]::TextC)
 $script:RustState = New-MetricLabel '—' (S 60) (S 130) (S 300) ([RustSuite.Theme]::TextC)
+$script:FortniteState = New-MetricLabel '—' (S 90) (S 152) (S 270) ([RustSuite.Theme]::TextC)
 $script:CpuVal.TextAlign  = 'MiddleRight'
 $script:RamVal.TextAlign  = 'MiddleRight'
 $script:DiskVal.TextAlign = 'MiddleRight'
@@ -8319,7 +9014,8 @@ $statsPanel.Controls.AddRange(@(
     (New-MetricLabel 'ОЗУ'  (S 14) (S 66) (S 80) ([RustSuite.Theme]::Muted)),
     (New-MetricLabel 'ДИСК' (S 14) (S 102) (S 80) ([RustSuite.Theme]::Muted)),
     (New-MetricLabel 'RUST' (S 14) (S 130) (S 46) ([RustSuite.Theme]::Muted)),
-    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState,
+    (New-MetricLabel 'FORTNITE' (S 14) (S 152) (S 74) ([RustSuite.Theme]::Muted)),
+    $script:CpuVal, $script:RamVal, $script:DiskVal, $script:RustState, $script:FortniteState,
     $script:CpuBar, $script:RamBar, $script:DiskBar
 ))
 
@@ -8335,6 +9031,7 @@ $statsPanel.Add_Resize({
     $script:RamVal.Width  = $script:CpuVal.Width
     $script:DiskVal.Width = $script:CpuVal.Width
     $script:RustState.Width = [Math]::Max((S 100), $w - (S 74))
+    $script:FortniteState.Width = [Math]::Max((S 90), $w - (S 104))
 })
 
 $logPanel = New-Object System.Windows.Forms.Panel
@@ -8654,6 +9351,7 @@ function Show-Group {
     $script:PicturePreviewAfter = $null
     $script:PictureTiles        = @()
     $script:PictureDescLabel    = $null
+    $script:FortniteStatusLabel = $null
     $script:HomeGauge           = $null
     $script:HomeSpark           = $null
     $script:HomeCpuVal          = $null
@@ -8699,6 +9397,10 @@ function Show-Group {
     $head.Bounds    = New-Object System.Drawing.Rectangle (S 12), $y, (S 420), (S 22)
     $script:RowHost.Controls.Add($head)
     $y += S 30
+
+    if ($gid -eq 'fortnite') {
+        $y = Add-FortnitePageExtras -W $w -Y $y
+    }
 
     if ($gid -eq 'clean') {
         $btnDeep = New-Object RustSuite.FlatButton
@@ -9895,6 +10597,157 @@ function Show-PicturePanel {
 }
 
 # ============================================================
+#  СТРАНИЦА «FORTNITE»: официальные пресеты и запуск игры
+#  Никаких модификаций клиента, EAC и оверлеев.
+# ============================================================
+
+function Update-FortniteStatusLabel {
+    try {
+        if ($script:FortniteStatusLabel -and -not $script:FortniteStatusLabel.IsDisposed) {
+            $script:FortniteStatusLabel.Text = 'Сейчас: ' + (Get-FortniteCfgStatusText)
+        }
+    } catch {}
+}
+
+function Add-FortnitePageExtras {
+    param([int]$W, [int]$Y)
+
+    $cw = $W
+    $y  = $Y
+    $ri = if ($script:FortniteInfo) { $script:FortniteInfo } else { Get-FortniteClientInfo }
+
+    # ---------- Информация о клиенте ----------
+    $info = New-Object System.Windows.Forms.Label
+    if ($ri.Found) {
+        $cfgTxt = if ($ri.CfgReady) { [string]$ri.CfgKeys + ' ключей' } else { 'создастся после первого запуска' }
+        $eacTxt = if ($ri.Eac) { 'EAC найден, не изменяется' } else { 'EAC не найден' }
+        $info.Text = ('Клиент ' + $ri.Version + '  ·  ' + $ri.Engine + '  ·  cfg: ' + $cfgTxt + "`r`n" +
+                      'Обновлён ' + $ri.Updated + '  ·  ' + $eacTxt)
+    } else {
+        $info.Text = 'FORTNITE не найден. Установите игру через Epic Games Launcher и запустите её один раз — появится GameUserSettings.ini.'
+    }
+    $info.Font      = [RustSuite.Theme]::FSmall
+    $info.ForeColor = [RustSuite.Theme]::Muted
+    $info.BackColor = [System.Drawing.Color]::Transparent
+    $info.AutoSize  = $false
+    $info.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 38)
+    $script:RowHost.Controls.Add($info)
+    $y += S 44
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text      = 'ОФИЦИАЛЬНЫЕ ПРЕСЕТЫ FORTNITE · GameUserSettings.ini'
+    $head.Font      = [RustSuite.Theme]::FHead
+    $head.ForeColor = [RustSuite.Theme]::Muted
+    $head.BackColor = [System.Drawing.Color]::Transparent
+    $head.AutoSize  = $false
+    $head.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 16)
+    $script:RowHost.Controls.Add($head)
+    $y += S 22
+
+    # ---------- Пресет максимального FPS ----------
+    $btnPerf = New-Object RustSuite.FlatButton
+    $btnPerf.Style  = 'Primary'
+    $btnPerf.Text   = '⚡  МАКСИМАЛЬНЫЙ FPS · ПРИМЕНИТЬ СЕЙЧАС'
+    $btnPerf.Bounds = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 46)
+    $btnPerf.Add_Click({
+        $r = Set-FortniteCfgPreset 'performance'
+        Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
+        Update-FortniteStatusLabel
+    })
+    $script:RowHost.Controls.Add($btnPerf)
+    $y += S 54
+
+    $half = [int](($cw - (S 8)) / 2)
+    $btnBal = New-Object RustSuite.FlatButton
+    $btnBal.Style  = 'Ghost'
+    $btnBal.Text   = 'БАЛАНС'
+    $btnBal.Font   = [RustSuite.Theme]::FSmall
+    $btnBal.Bounds = New-Object System.Drawing.Rectangle 0, $y, $half, (S 38)
+    $btnBal.Add_Click({
+        $r = Set-FortniteCfgPreset 'balanced'
+        Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
+        Update-FortniteStatusLabel
+    })
+    $btnQual = New-Object RustSuite.FlatButton
+    $btnQual.Style  = 'Ghost'
+    $btnQual.Text   = 'КАЧЕСТВО'
+    $btnQual.Font   = [RustSuite.Theme]::FSmall
+    $btnQual.Bounds = New-Object System.Drawing.Rectangle ($half + (S 8)), $y, ($cw - $half - (S 8)), (S 38)
+    $btnQual.Add_Click({
+        $r = Set-FortniteCfgPreset 'quality'
+        Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
+        Update-FortniteStatusLabel
+    })
+    $script:RowHost.Controls.AddRange(@($btnBal, $btnQual))
+    $y += S 46
+
+    $script:FortniteStatusLabel = New-Object System.Windows.Forms.Label
+    $script:FortniteStatusLabel.Text      = 'Сейчас: ' + (Get-FortniteCfgStatusText)
+    $script:FortniteStatusLabel.Font      = [RustSuite.Theme]::FSmall
+    $script:FortniteStatusLabel.ForeColor = [RustSuite.Theme]::Muted
+    $script:FortniteStatusLabel.BackColor = [System.Drawing.Color]::Transparent
+    $script:FortniteStatusLabel.AutoSize  = $false
+    $script:FortniteStatusLabel.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 18)
+    $script:RowHost.Controls.Add($script:FortniteStatusLabel)
+    $y += S 24
+
+    $btnUndo = New-Object RustSuite.FlatButton
+    $btnUndo.Style  = 'Ghost'
+    $btnUndo.Text   = '↩  ВЕРНУТЬ ИСХОДНЫЙ GAMEUSERSETTINGS.INI'
+    $btnUndo.Font   = [RustSuite.Theme]::FSmall
+    $btnUndo.Bounds = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 36)
+    $btnUndo.Add_Click({
+        $r = Undo-FortniteCfg
+        Set-Status $r.Message $(if ($r.Ok) { '#4ECB71' } else { '#E3B341' })
+        Update-FortniteStatusLabel
+    })
+    $script:RowHost.Controls.Add($btnUndo)
+    $y += S 48
+
+    # ---------- Запуск и папка ----------
+    $btnLaunch = New-Object RustSuite.FlatButton
+    $btnLaunch.Style  = 'Primary'
+    $btnLaunch.Text   = '▶  ЗАПУСТИТЬ FORTNITE С ОПТИМИЗАЦИЕЙ'
+    $btnLaunch.Bounds = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 46)
+    $btnLaunch.Add_Click({ Start-Fortnite })
+    $script:RowHost.Controls.Add($btnLaunch)
+    $y += S 54
+
+    $btnFolder = New-Object RustSuite.FlatButton
+    $btnFolder.Style  = 'Ghost'
+    $btnFolder.Text   = 'ОТКРЫТЬ ПАПКУ КОНФИГА'
+    $btnFolder.Font   = [RustSuite.Theme]::FSmall
+    $btnFolder.Bounds = New-Object System.Drawing.Rectangle 0, $y, $half, (S 34)
+    $btnFolder.Add_Click({
+        $d = Get-FortniteCfgDir
+        if ($d) { Open-Explorer $d } else { Write-Log 'Fortnite не найден — папка конфига недоступна' 'warn' }
+    })
+
+    $btnCheck = New-Object RustSuite.FlatButton
+    $btnCheck.Style  = 'Ghost'
+    $btnCheck.Text   = '◈  ПРОВЕРИТЬ КЛИЕНТ И CFG'
+    $btnCheck.Font   = [RustSuite.Theme]::FSmall
+    $btnCheck.Bounds = New-Object System.Drawing.Rectangle ($half + (S 8)), $y, ($cw - $half - (S 8)), (S 34)
+    $btnCheck.Add_Click({ Show-TextDialog 'FORTNITE' (Get-FortniteCompatText) })
+    $script:RowHost.Controls.AddRange(@($btnFolder, $btnCheck))
+    $y += S 44
+
+    $note = New-Object System.Windows.Forms.Label
+    $note.Text = 'Fortnite использует EasyAntiCheat. Меняются только официальные настройки меню игры, реестр Windows и профиль GPU: ' +
+                 'exe/dll клиента и файлы EAC не затрагиваются. Если игра запущена, пресет запишется автоматически после её закрытия. ' +
+                 'Откат возвращает исходный GameUserSettings.ini из резервной копии.'
+    $note.Font      = [RustSuite.Theme]::FSmall
+    $note.ForeColor = [RustSuite.Theme]::Muted
+    $note.BackColor = [System.Drawing.Color]::Transparent
+    $note.AutoSize  = $false
+    $note.Bounds    = New-Object System.Drawing.Rectangle 0, $y, $cw, (S 74)
+    $script:RowHost.Controls.Add($note)
+    $y += S 84
+
+    return $y
+}
+
+# ============================================================
 #  ДЕЙСТВИЯ И ТАЙМЕРЫ
 # ============================================================
 function Update-BindListBox {
@@ -10034,6 +10887,7 @@ function Update-Stats {
         if (-not $script:TestUi) {
             try { [void](Test-LookDrift) } catch {}
             try { [void](Update-PendingVisualCfg) } catch {}
+            try { [void](Update-PendingFortniteCfg) } catch {}
         }
     }
     $cpu = -1
@@ -10118,6 +10972,7 @@ function Update-Stats {
     }
 
     $script:RustRunning = Test-RustRunning
+    $script:FortniteRunning = Test-FortniteRunning
     if ($script:RustState -and -not $script:RustState.IsDisposed) {
         if (-not $script:RustExe) {
             $script:RustState.Text = 'не найден — запустите игру через Steam'
@@ -10134,6 +10989,19 @@ function Update-Stats {
             }
             $script:RustState.Text = 'готов' + $rver
             $script:RustState.ForeColor = [RustSuite.Theme]::Muted
+        }
+    }
+    if ($script:FortniteState -and -not $script:FortniteState.IsDisposed) {
+        if (-not $script:FortniteExe) {
+            $script:FortniteState.Text = 'не найден — установите через Epic Games'
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Warn
+        } elseif ($script:FortniteRunning) {
+            $script:FortniteState.Text = 'запущен · High · пресет ' + $(if ($script:State['FortnitePreset']) { Get-FortnitePresetName ([string]$script:State['FortnitePreset']) } else { 'по умолчанию' })
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Ok
+        } else {
+            $fver = if ($script:FortniteInfo -and $script:FortniteInfo.Found) { ' ' + $script:FortniteInfo.Version } else { '' }
+            $script:FortniteState.Text = 'готов' + $fver + ' · ' + (Get-FortniteCfgStatusText)
+            $script:FortniteState.ForeColor = [RustSuite.Theme]::Muted
         }
     }
     if ($script:Header -and -not $script:Header.IsDisposed) { $script:Header.Invalidate() }
@@ -10200,6 +11068,52 @@ function Start-Rust {
     }
 }
 
+# ---------- Запуск Fortnite ----------
+$script:FnLaunchTries = 0
+$script:FnLaunchTimer = New-Object System.Windows.Forms.Timer
+$script:FnLaunchTimer.Interval = 2000
+$script:FnLaunchTimer.Add_Tick({
+    $p = @(Get-FortniteProcesses)
+    if ($p.Count -gt 0) {
+        Invoke-FortniteProcessPolish
+        Write-Log 'Fortnite запущен — приоритет High применён' 'ok'
+        Set-Status 'FORTNITE запущен, оптимизация применена' '#4ECB71'
+        $script:FnLaunchTimer.Stop()
+        Update-Stats
+    } else {
+        $script:FnLaunchTries--
+        if ($script:FnLaunchTries -le 0) {
+            $script:FnLaunchTimer.Stop()
+            Write-Log 'Fortnite не появился за 3 минуты — откройте игру вручную' 'warn'
+            Set-Status 'FORTNITE не запустился автоматически' '#E3B341'
+        }
+    }
+})
+
+function Start-Fortnite {
+    if ($script:Busy) { return }
+    $started = $false
+    try {
+        [System.Diagnostics.Process]::Start('com.epicgames.launcher://apps/fn?action=launch&silent=true') | Out-Null
+        $started = $true
+    } catch {}
+    if (-not $started -and $script:FortniteExe) {
+        try {
+            [System.Diagnostics.Process]::Start($script:FortniteExe) | Out-Null
+            $started = $true
+        } catch {}
+    }
+    if (-not $started) {
+        Write-Log 'Не удалось запустить Fortnite: проверьте Epic Games Launcher' 'err'
+        Set-Status 'Fortnite не запустился — откройте Epic Games' '#E3B341'
+        return
+    }
+    Write-Log 'Запуск FORTNITE через Epic Games…' 'step'
+    Set-Status 'Ожидание процесса Fortnite…' '#FF8A4C'
+    $script:FnLaunchTries = 90
+    $script:FnLaunchTimer.Start()
+}
+
 # ---------- Кнопки ----------
 $btnSafe.Add_Click({
     foreach ($t in $script:Tweaks) { $script:Enabled[$t.Id] = (-not $t.Risk) }
@@ -10238,7 +11152,7 @@ $btnRun.Add_Click({
 
         $ansReboot = [System.Windows.Forms.MessageBox]::Show(
             ("Готово. Применено модулей: $n.`n`nДля применения всех изменений нужна перезагрузка ПК.`nПерезагрузить сейчас?`n`nОК — перезагрузка через 10 секунд (несохранённые файлы будут закрыты).`nОтмена — перезагрузите вручную позже."),
-            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OKCancel', 'Question', 'Button1')
+            'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OKCancel', 'Question', 'Button1')
 
         if ($ansReboot -eq 'OK') {
             $scheduled = $false
@@ -10274,19 +11188,19 @@ $btnRun.Add_Click({
             if (-not $scheduled) {
                 [void][System.Windows.Forms.MessageBox]::Show(
                     ("Не удалось перезагрузить ПК автоматически.`n`nЗапустите программу от имени администратора`nили перезагрузите компьютер вручную.`n`nЖурнал: $($script:LogFile)"),
-                    'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Warning')
+                    'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Warning')
             }
         } else {
             [void][System.Windows.Forms.MessageBox]::Show(
                 ("Перезагрузка отложена.`nЖурнал: $($script:LogFile)"),
-                'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Information')
+                'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Information')
         }
     } catch {
         $msg = $_.Exception.Message
         Write-Log ('Ошибка оптимизации: ' + $msg) 'err'
         [void][System.Windows.Forms.MessageBox]::Show(
             ("Ошибка оптимизации: $msg`n`nЖурнал: $($script:LogFile)"),
-            'PURPLE RUSH — RUST PERFORMANCE ENGINE', 'OK', 'Error')
+            'PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE', 'OK', 'Error')
     } finally {
         $btnRun.Enabled  = $true
         $btnUndo.Enabled = $true
@@ -10338,6 +11252,14 @@ $form.Add_KeyDown({
             $idx = $key - $first
             if ($idx -ge 0 -and $idx -lt $script:Groups.Count) {
                 Request-Group $script:Groups[$idx].Id
+                $e.Handled = $true
+                $e.SuppressKeyPress = $true
+                return
+            }
+        }
+        if ($key -eq [int][System.Windows.Forms.Keys]::D0) {
+            if ($script:Groups.Count -ge 10) {
+                Request-Group $script:Groups[9].Id
                 $e.Handled = $true
                 $e.SuppressKeyPress = $true
                 return
@@ -10408,13 +11330,15 @@ $form.Add_Shown({
     if (-not $script:TestUi) {
         try { [void](Restore-LookOnStartup) } catch {}
         try { [void](Update-PendingVisualCfg) } catch {}
+        try { [void](Update-PendingFortniteCfg) } catch {}
         try { Update-PictureStatusLabel } catch {}
     }
 
-    Write-Log ('PURPLE RUSH — RUST PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
+    Write-Log ('PURPLE RUSH - RUST + FORTNITE PERFORMANCE ENGINE v' + $script:AppVersion) 'step'
     Write-Log ('Права администратора: ' + $(if ($script:IsAdmin) { 'да' } else { 'НЕТ — часть функций не сработает' })) $(if ($script:IsAdmin) { 'info' } else { 'warn' })
     Write-Log ('Steam: ' + $(if ($script:SteamPath) { $script:SteamPath } else { 'не найден' })) 'info'
     Write-Log ('RUST: ' + $(if ($script:RustExe) { $script:RustExe } else { 'не найден' })) 'info'
+    Write-Log ('FORTNITE: ' + $(if ($script:FortniteExe) { $script:FortniteExe } else { 'не найден' })) 'info'
     try {
         $cores = (Get-CimInstance Win32_Processor | Select-Object -First 1).NumberOfCores
         Write-Log ('Физических ядер: ' + $cores) 'info'
@@ -10576,6 +11500,43 @@ $form.Add_Shown({
                         Write-Host 'PICTURE OK'
                     }
                     11 {
+                        Show-Group 'fortnite'
+                        $fcards = @($script:RowHost.Controls | Where-Object { $_ -is [RustSuite.Card] })
+                        if ($fcards.Count -lt 5) { throw 'FORTNITE CARDS MISSING' }
+                        if (-not $script:FortniteStatusLabel -or $script:FortniteStatusLabel.Text.Length -lt 3) {
+                            throw 'FORTNITE STATUS MISSING'
+                        }
+                        if ($script:FortniteExe -and (-not $script:FortniteInfo -or -not $script:FortniteInfo.Found -or [int]$script:FortniteInfo.CfgKeys -le 0)) {
+                            throw 'FORTNITE INFO MISSING'
+                        }
+                        Write-Host ('FORTNITE cards=' + $fcards.Count +
+                                    ' version=' + $(if ($script:FortniteInfo) { $script:FortniteInfo.Version } else { 'n/a' }) +
+                                    ' cfg=' + $(if ($script:FortniteInfo) { $script:FortniteInfo.CfgKeys } else { 0 }))
+                        if ($env:RUSTOPT_SHOT_FN) {
+                            try {
+                                if ($script:FadeVeil) { $script:FadeVeil.Cancel() }
+                                $script:RowHost.ScrollToTop()
+                                $script:ProbeBusy = $true
+                                try {
+                                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                    while ($sw.ElapsedMilliseconds -lt 420) {
+                                        [System.Windows.Forms.Application]::DoEvents()
+                                        Start-Sleep -Milliseconds 15
+                                    }
+                                    $sw.Stop()
+                                } finally { $script:ProbeBusy = $false }
+                                $form.Refresh()
+                                $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
+                                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                                $g.CopyFromScreen($form.Location, [System.Drawing.Point]::Empty, $form.Size)
+                                $g.Dispose()
+                                $bmp.Save([string]$env:RUSTOPT_SHOT_FN, [System.Drawing.Imaging.ImageFormat]::Png)
+                                $bmp.Dispose()
+                            } catch {}
+                        }
+                        Write-Host 'FORTNITE OK'
+                    }
+                    12 {
                         Show-Group 'home'
                         if (-not $script:HomeGauge -or $script:HomeGauge.IsDisposed) { throw 'HOME GAUGE MISSING' }
                         if (-not $script:HomeSpark -or $script:HomeSpark.IsDisposed) { throw 'HOME SPARKLINE MISSING' }
@@ -10591,7 +11552,7 @@ $form.Add_Shown({
                                     ' spark=' + $script:HomeSpark.Width + 'x' + $script:HomeSpark.Height)
                         Write-Host 'HOME OK'
                     }
-                    12 {
+                    13 {
                         try { $script:ProbeTimer.Stop() } catch {}
                         Apply-Theme 'PURPLE RUSH' -Save
                         Update-ThemeSurfaces
