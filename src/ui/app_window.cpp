@@ -165,8 +165,7 @@ public:
     void start_background() {
         ::SetTimer(hwnd_, kTimerId, 4000, nullptr);
 
-        auto shared = state_;
-        std::thread([shared]() {
+        std::thread([]() {
             // Keep the desktop / Start menu icon in place even if the user moved
             // the executable or deleted the shortcut.
             shortcut::ensure(fsx::exe_path());
@@ -174,7 +173,7 @@ public:
             update::cleanup_stale(fsx::exe_path());
         }).detach();
 
-        std::thread([shared]() { update_worker(shared); }).detach();
+        std::thread([shared = state_]() { update_worker(shared); }).detach();
     }
 
     // Mandatory update: check, download, verify, swap and relaunch. There is no

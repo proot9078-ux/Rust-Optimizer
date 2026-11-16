@@ -26,7 +26,7 @@ struct Release {
     bool prerelease = false;
     std::vector<Asset> assets;
 
-    const Asset* find_asset(std::string_view name) const;
+    const Asset* find_asset(std::string_view asset_name) const;
     const Asset* find_first(const std::vector<std::string>& suffixes) const;
 };
 

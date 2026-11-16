@@ -185,7 +185,7 @@ HICON create(int size) {
 
 bool write_ico_file(const std::filesystem::path& file, const std::vector<int>& sizes, std::string& error) {
     if (!g_ready && !init()) {
-        error = "GDI+ РЅРµ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°РЅ";
+        error = "GDI+ не инициализирован";
         return false;
     }
     struct Frame {
@@ -197,26 +197,31 @@ bool write_ico_file(const std::filesystem::path& file, const std::vector<int>& s
         if (size <= 0 || size > 256) continue;
         auto bmp = render(size);
         if (!bmp) {
-            error = "РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚СЂРёСЃРѕРІР°С‚СЊ РєР°РґСЂ";
+            error = "не удалось отрисовать кадр";
             return false;
         }
         bool ok = false;
         auto data = png_bytes(*bmp, ok);
         if (!ok) {
-            error = "РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РєРѕРґРёСЂРѕРІР°С‚СЊ PNG";
+            error = "не удалось закодировать PNG";
             return false;
         }
         frames.push_back(Frame{size, std::move(data)});
     }
     if (frames.empty()) {
-        error = "РЅРµС‚ РєР°РґСЂРѕРІ РґР»СЏ Р·Р°РїРёСЃРё";
+        error = "нет кадров для записи";
         return false;
     }
 
     fsx::ensure_dir(file.parent_path());
-    FILE* f = _wfopen(file.wstring().c_str(), L"wb");
+    std::FILE* f = nullptr;
+#if defined(_MSC_VER)
+    if (_wfopen_s(&f, file.wstring().c_str(), L"wb") != 0) f = nullptr;
+#else
+    f = _wfopen(file.wstring().c_str(), L"wb");
+#endif
     if (!f) {
-        error = "РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ " + file.filename().string();
+        error = "не удалось создать " + file.filename().string();
         return false;
     }
     const std::uint16_t count = static_cast<std::uint16_t>(frames.size());
@@ -254,7 +259,7 @@ bool write_ico_file(const std::filesystem::path& file, const std::vector<int>& s
     }
     std::fclose(f);
     if (!ok) {
-        error = "РѕС€РёР±РєР° Р·Р°РїРёСЃРё .ico";
+        error = "ошибка записи .ico";
         fsx::remove_file(file);
         return false;
     }

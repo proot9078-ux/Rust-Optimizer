@@ -300,7 +300,12 @@ bool Client::download(const std::wstring& url, const std::filesystem::path& dest
         }
 
         fsx::ensure_dir(dest.parent_path());
-        FILE* file = _wfopen(dest.wstring().c_str(), L"wb");
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (_wfopen_s(&file, dest.wstring().c_str(), L"wb") != 0) file = nullptr;
+#else
+        file = _wfopen(dest.wstring().c_str(), L"wb");
+#endif
         if (!file) {
             error = "не удалось создать файл " + str::narrow(dest.wstring());
             return false;

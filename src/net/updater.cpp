@@ -65,9 +65,9 @@ std::string find_checksum(std::string_view file_name, std::string_view sums_text
 
 }  // namespace
 
-const Asset* Release::find_asset(std::string_view name) const {
+const Asset* Release::find_asset(std::string_view asset_name) const {
     for (const auto& a : assets) {
-        if (str::iequals(a.name, name)) return &a;
+        if (str::iequals(a.name, asset_name)) return &a;
     }
     return nullptr;
 }
