@@ -4,8 +4,9 @@
 IDI_APPICON ICON "@RO_ICON_FILE_RC@"
 
 // Side-by-side manifest: PerMonitorV2 DPI, no auto-elevation, Win10/11 aware.
-// MinGW's linker injects its own default manifest, so the resource is only
-// added for MSVC (RO_MANIFEST_RESOURCE is empty otherwise).
+// MSVC merges this file through /MANIFESTINPUT at link time; MinGW readers get
+// it as a resource. RO_MANIFEST_RESOURCE stays empty in both cases so the two
+// toolchains never emit a duplicate RT_MANIFEST.
 @RO_MANIFEST_RESOURCE@
 
 VS_VERSION_INFO VERSIONINFO

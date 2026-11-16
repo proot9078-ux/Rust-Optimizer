@@ -133,7 +133,10 @@ set(RO_VERSION_COMMA "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJEC
 file(TO_CMAKE_PATH "${RO_ICON_FILE}" RO_ICON_FILE_RC)
 file(TO_CMAKE_PATH "${RO_MANIFEST_FILE}" RO_MANIFEST_FILE_RC)
 if(MSVC)
-  set(RO_MANIFEST_RESOURCE "1 RT_MANIFEST \"${RO_MANIFEST_FILE_RC}\"")
+  # The MSVC linker always embeds its own manifest as resource 1; adding a
+  # second RT_MANIFEST with the same id fails with CVT1100. Instead the linker
+  # merges our DPI/v2 manifest with its default one via /MANIFESTINPUT.
+  set(RO_MANIFEST_RESOURCE "")
 else()
   # MinGW's ld already adds a default manifest; a second one is a link error.
   set(RO_MANIFEST_RESOURCE "")
@@ -152,6 +155,10 @@ add_executable(RustOptimizer WIN32
     "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 target_link_libraries(RustOptimizer PRIVATE ro_core)
 target_include_directories(RustOptimizer PRIVATE include)
+if(MSVC)
+  # Merge the PerMonitorV2 manifest into the linker-generated one (see above).
+  target_link_options(RustOptimizer PRIVATE "/MANIFESTINPUT:${RO_MANIFEST_FILE}")
+endif()
 target_compile_definitions(RustOptimizer PRIVATE RO_ICON_PATH="${RO_ICON_FILE}")
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/app.rc" PROPERTIES OBJECT_DEPENDS "${RO_ICON_FILE}")
 add_dependencies(RustOptimizer ro_icon)
