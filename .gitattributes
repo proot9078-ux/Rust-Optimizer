@@ -1,5 +1,20 @@
 * text=auto eol=crlf
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+*.sh  text eol=lf
 *.md  text eol=lf
 *.yml text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.cpp text eol=crlf
+*.hpp text eol=crlf
+*.c   text eol=crlf
+*.h   text eol=crlf
+
+# Vendored sources keep their exact bytes; avoid line-ending churn.
+third_party/** -text
+
+# Binary assets
+*.png binary
+*.ico binary
+*.zip binary

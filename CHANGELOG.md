@@ -1,5 +1,64 @@
 # Changelog
 
+## 8.0.0 - 2026-11-15
+
+Полная переработка: PowerShell/WinForms заменён на нативное приложение **C++20
+(Win32 + Direct2D/DirectWrite)**, один самодостаточный `RustOptimizer.exe` со
+статическим CRT.
+
+- **Новый интерфейс**: боковая навигация (Обзор, RUST, FORTNITE, Система,
+  Профили, Настройки, Логи), карточки-переключатели, кнопка «Применить» на
+  каждой странице, прогресс и живой журнал, тёмная тема по умолчанию и светлая
+  опционально, PerMonitorV2 DPI, плавная прокрутка.
+- **Иконка генерируется программно** (GDI+) при сборке: `ro_icon_gen` пишет
+  многоразмерный `.ico`, он же встраивается в ресурсы `.exe` и используется в
+  заголовке/панели задач.
+- **Поиск игр** без жёстких путей: реестр Steam (включая Wow6432Node),
+  `libraryfolders.vdf`, проверка `appmanifest_252490.acf`, манифесты Epic,
+  кэш с валидацией. RUST ищется только в реально установленной библиотеке.
+- **RUST**: `client.cfg` с сохранением неизвестных строк, бэкап и откат,
+  травa/SSAA/VSync/тени/pixel light/GC buffer, launch options
+  (`-high -maxMem=... -malloc=system -force-d3d11 ...`), импорт/экспорт `.rop`.
+- **FORTNITE**: `GameUserSettings.ini` (FrameRateLimit=0, VSync off, fullscreen,
+  нативное разрешение) и `Engine.ini` `[SystemSettings]` (motion blur, bloom,
+  lens flare, DOF, Shadow.MaxResolution, Streaming.PoolSize) внутри маркерных
+  блоков `; >>> RO:<id> >>>`.
+- **Система**: очистка standby-списка через
+  `NtSetSystemInformation(SystemMemoryListInformation)` с проверкой прав,
+  Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, отключение fullscreen
+  optimizations, affinity с учётом P/E-core и AMD 3D V-Cache.
+- **Приоритет только HIGH** (`REALTIME` запрещён), применение к
+  `RustClient.exe` / `FortniteClient-Win64-Shipping.exe`.
+- **Обязательное автообновление**: при каждом запуске проверяется GitHub
+  Releases, и при выходе новой версии окно блокируется красивой карточкой
+  прогресса — загрузка `.zip`, проверка `SHA256SUMS.txt`, распаковка, подмена
+  `.exe` через helper-режим `--apply-update`, обновление ярлыков на рабочем столе
+  и в меню «Пуск», перезапуск новой версии и удаление старого бинарника со
+  staging-папкой. Отказаться или отложить нельзя; неудачные попытки
+  повторяются автоматически с показом ошибки.
+- **Надёжность**: RAII для `HANDLE`/`HKEY`/`HICON`, проверка каждой Win32-функции
+  с `GetLastError()`, `std::filesystem` без исключений, никакого `system()` —
+  только `CreateProcessW` с `CREATE_NO_WINDOW`, один экземпляр лога.
+- **Тесты и CI**: Catch2-набор (`ro_tests`) для строк, файловой системы,
+  INI-движка, Steam VDF/ACF, launch options, версий и JSON релиза; workflow
+  MSVC + CMake + `/W4 /WX`, `ctest`, smoke-тест `--selftest`, публикация релиза
+  по тегу `v*`; локальный `tools/release.ps1`.
+- **Диагностика**: `--selftest`, `--version`, файловые логи в
+  `%LOCALAPPDATA%\RustOptimizer\logs`.
+
+## 8.1 - 2026-11-08
+
+- **Страница FPS RECOVERY**: новая диагностика реальных причин низкого FPS после обновлений RUST и FORTNITE. Проверяются план питания, троттлинг питания / EcoQoS, Game DVR, игровой режим, ОЗУ, HAGS, приоритет процесса игры, GPU, полный экран, cfg и энергосбережение Fortnite. У каждого пункта — статус `ok/warn/info`, описание и кнопка «ИСПРАВИТЬ»; сверху — кольцо готовности 0–100, частота монитора и рекомендуемый лимит кадров.
+- **«ПОЧИНИТЬ FPS СЕЙЧАС»**: одним действием отключает фоновую запись Xbox и включает игровой режим, снимает троттлинг питания и выбирает план высокой производительности, привязывает Fortnite к дискретной GPU и честному полному экрану, выключает энергосбережение и включает Low Latency Mode, применяет пресет максимального FPS и ставит лимит кадров по герцовке монитора, поднимает приоритет запущенных игр и очищает ОЗУ.
+- **Снятие EcoQoS у процесса игры**: в `RustSuite.Native` добавлен `SetProcessInformation` (`PROCESS_POWER_THROTTLING_STATE`), который снимает «Режим эффективности» Windows 11 с клиента, не меняя его приоритет. Применяется к Fortnite и RUST.
+- **Исправлен запуск Fortnite**: убран ошибочный URI `com.epicgames.launcher://apps/fn`. Теперь порядок способов — `CatalogItemId` из манифеста Epic, `apps/Fortnite`, официальный `FortniteBootstrapper.exe` с `-epicapp=Fortnite -epicenv=Prod -epicportal`, затем клиент напрямую; каждый следующий — резервный, ошибки пишутся в журнал.
+- **Второй клиент не запускается**: если Fortnite уже работает, окно игры поднимается на передний план через `SetForegroundWindow`/`ShowWindow`, а к процессу применяются приоритет High и снятие троттлинга.
+- **Отложенные настройки Fortnite больше не теряются**: `Test-FortniteCfgPending` и сторожевой таймер не дают оптимизатору закрыться, пока игра запущена и cfg не записан. После выхода из игры пресет, своя настройка и энергосбережение записываются автоматически, и только затем окно закрывается. Порядок записи исправлен: сначала пресет, затем своя настройка, чтобы лимит кадров не терялся.
+- **Ключи энергосбережения 43.00**: `bIsEnergySavingEnabledIdle`, `bIsEnergySavingEnabledFocusLoss`, `EnergySavingLevelFocusLoss`, `bStopRenderingInBackground`, `bAllowUIParallax`, `LowInputLatencyModeIsEnabled`, `DesiredGlobalIlluminationQuality` и `DesiredReflectionQuality` добавлены во все пресеты и в новый модуль `fortniteenergy`.
+- **Автозапуск не выбирает неустановленную игру**: если выбранной игры нет, оптимизатор переключается на найденную и пишет это в журнал; если нет ни одной — автозапуск пропускается.
+- **Интерфейс**: новый пункт меню «FPS RECOVERY» с иконкой, кнопка «ПОЧИНИТЬ FPS FORTNITE» на странице Fortnite и кнопка энергосбережения; исправлено наложение кнопок «ПРИМЕНИТЬ» и «СЧИТАТЬ» на узком окне.
+- **Модулей: 72.** Новые: `fortniteenergy`, `fpsrecovery`. `-SelfTest` проверяет новые функции, нативные вызовы, отсутствие старого URI `apps/fn`, диапазон оценки 0–100 и отложенный cfg; `-TestUi` открывает страницу FPS и проверяет кольцо, строки диагностики и отчёт.
+
 ## 7.0 — 2026-11-06
 
 - **Полноценный профиль FORTNITE**: игра теперь поддерживается наравне с RUST. `Find-FortniteExe` ищет клиент через манифесты Epic Games Launcher, `LauncherInstalled.dat` и стандартные папки; версия сборки читается из `CompleteVersion` манифеста (например, `43.00`), путь к `GameUserSettings.ini` и статус EasyAntiCheat определяются автоматически.

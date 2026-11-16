@@ -1,378 +1,147 @@
-# PURPLE RUSH — RUST + FORTNITE PERFORMANCE ENGINE
+# Rust Optimizer 8 — RUST + FORTNITE performance engine
 
-[![CI](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/ci.yml)
+[![build](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/build.yml/badge.svg)](https://github.com/proot9078-ux/Rust-Optimizer/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
-[![PowerShell 5.1](https://img.shields.io/badge/PowerShell-5.1-blue.svg)](https://learn.microsoft.com/powershell/)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
+[![Windows 10/11 x64](https://img.shields.io/badge/Windows-10%2F11%20x64-0078D4.svg)](#system-requirements)
 [![Release](https://img.shields.io/github/v/release/proot9078-ux/Rust-Optimizer?color=a03ce0)](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest)
 
 <p align="center">
-  <img src="assets/app-icon.png" width="144" alt="PURPLE RUSH icon">
+  <img src="assets/app-icon.png" width="144" alt="Rust Optimizer icon">
 </p>
 
-Открытый оптимизатор Windows под игры **RUST** и **FORTNITE** с глубокой очисткой, диагностикой и восстановлением системы. Полностью читаемый исходный код, без обфускации, скрытых бинарников и «магических» твиков.
+Native Windows application (C++20, Win32 + Direct2D) that tunes **RUST** and
+**FORTNITE** from the outside: game configs, launch options, process priority,
+CPU affinity and the Windows standby list. It does **not** inject into game
+processes, does not read game memory and does not ship DLLs, so it stays
+compatible with Easy Anti-Cheat and BattlEye.
 
-> **Версия 7.0** · 64 модуля · 10 разделов · профиль FORTNITE · официальные пресеты GameUserSettings.ini · 14 тем · пресеты «КАРТИНКИ» по двойному клику · полоски позиции у карточек · адаптация под Rust 2026 (Unity 6.3) · автоподстройка cfg · плавные переходы · защита целостности клиента · профили в JSON · отчёт `-Verify`.
+The previous version of this project was a PowerShell/WinForms monolith. 8.0 is
+a ground-up C++ rewrite: a single self-contained `RustOptimizer.exe`, no
+PowerShell runtime, no external dependencies.
 
----
+## Features
 
-## Почему PURPLE RUSH — лучший открытый оптимизатор под RUST и FORTNITE
-
-Не потому, что так написано на красивой картинке, а по шести проверяемым критериям. Их можно перепроверить за три минуты — исходник лежит в этом же репозитории.
-
-| Критерий | PURPLE RUSH | Типичный закрытый «твикер» |
-|---|---|---|
-| **Открытый код и сборка** | 20 читаемых частей `src/parts/*.ps1`, MIT, сборка одной командой | Бинарник или обфускация |
-| **Клиент игры не трогается** | Только официальные `cfg\client.cfg`, `cfg\keys.cfg` и `GameUserSettings.ini`; снимок клиента до/после | Патчи файлов, DLL, текстуры |
-| **Нет доступа к памяти и инъекций** | Нет чтения/записи памяти, оверлеев, ReShade, Freestyle | Часто ядро «буста FPS» |
-| **Обратимость** | Точка восстановления, бэкапы, журнал, кнопка «ОТКАТ», JSON-профили | «Поверь, что стало лучше» |
-| **Проверяемость** | `-Verify` с SHA256 и аудитом, `-SelfTest`, `-TestUi`, отчёт в UI | Ничего нельзя проверить |
-| **Живая разработка** | CI на каждый push, changelog, теги релизов | Редкие «сборки» без истории |
-
-Подробный разбор критериев, отличий от RustTweaker-подобных сборок и честных ограничений: **[docs/WHY.md](docs/WHY.md)**.
-
-Коротко: программа не изменяет `RustClient.exe` и DLL, не читает память игры, не ставит оверлеи и не скачивает бинарники. Она настраивает Windows, документированные параметры RUST и официальные настройки Fortnite — и доказывает снимком, что клиент остался целым.
-
----
-
-## Что нового в 7.0
-
-- **Полноценный профиль FORTNITE** — отдельный раздел с определением клиента Epic Games, версией сборки, путём к `GameUserSettings.ini`, количеством ключей и статусом EasyAntiCheat.
-- **Официальные пресеты Fortnite** — «МАКСИМАЛЬНЫЙ FPS», «БАЛАНС» и «КАЧЕСТВО». Меняются только параметры меню игры: VSync, FrameRateLimit, тени, эффекты, постобработку, отражения, растительность и полный экран. Файлы exe/dll и EAC не затрагиваются.
-- **Безопасная запись и откат** — исходный `GameUserSettings.ini` сохраняется в `%ProgramData%\RustOptimizer\fortnitecfg`; кнопка отката возвращает его целиком. Чужие ключи и секции не теряются.
-- **Если Fortnite запущен**, пресет записывается автоматически после закрытия игры — настройки не пропадают.
-- **Новые модули Fortnite** — честный полный экран, привязка к дискретной GPU, приоритет High и опционально только физические ядра. Всего модулей: **64**.
-- **Запуск через Epic Games** — кнопка «ЗАПУСТИТЬ FORTNITE» открывает игру через официальный лаунчер и применяет приоритет после старта.
-- **Интерфейс** — отдельный пункт меню FORTNITE, статус обеих игр в шапке и правой панели, карточка Fortnite в «ОБЗОРЕ», `Ctrl+0` для десятого раздела.
-
-## Что нового в 6.2
-
-- **Двойной клик по пресету «КАРТИНКА» применяет режим сразу** — цвет Windows (гамма/контраст) и официальные конвары `client.cfg` записываются одним действием. Одиночный клик остаётся безопасным: только выбор и описание.
-- **Режим сохраняется** — выбранный пресет запоминается, восстанавливается при запуске программы и автоматически возвращается, если драйвер сбросил гамму в полноэкранном режиме.
-- **Если игра запущена**, `client.cfg` записывается автоматически после её закрытия — режим не теряется.
-- **Исправлен двойной клик** у плиток: явно включены `StandardClick` / `StandardDoubleClick`.
-- Подсказки на странице обновлены: видно, что двойной клик применяет пресет, а программы возвращает цвет после перезагрузки.
-
-## Что нового в 6.1
-
-- **Полоска листания у каждого модуля** — внизу карточки виден тонкий индикатор позиции в списке раздела. Заполнение плавно доезжает до цели, а не появляется рывком; на длинных списках сразу понятно, где находится модуль.
-- Работает во всех группах: «СИСТЕМА», «СЕТЬ», «RUST» и «ОЧИСТКА».
-- `-SelfTest` проверяет свойства `ListIndex` / `ListTotal`, `-TestUi` — соответствие числа модулей и снимок страницы «СИСТЕМА».
-
-## Что нового в 6.0
-
-- **Адаптация под Rust 2026 / Unity 6.3** — программа определяет установленный клиент (`RustClient.exe`, Unity `6000.3.x`, сборка и дата), читает его `cfg\client.cfg` и применяет только те конвары, которые эта версия игры реально использует. Неизвестные ключи пропускаются и пишутся в журнал, поэтому обновление Rust больше не ломает настройки.
-- **Проверка совместимости cfg** — на странице **«RUST»** появился блок с версией клиента, Unity, сборкой, датой обновления, EasyAntiCheat и числом ключей, а кнопка **«ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG»** показывает полный отчёт. Те же строки добавлены в отчёт о надёжности `-Verify`.
-- **Новые актуальные конвары** — `graphics.vsync 0`, `graphicssettings.pixellightcount 0`, `graphics.collapserenderers True`, `mesh.reducebonecountonlowlod True`, `sss.halfres True`, `sss.quality 0`, `effects.maxgibdist 0`: меньше лишних вызовов рендера без правки клиента и шейдеров.
-- **Два новых безопасных твика** — оптимизации оконных игр Windows 11 (`SwapEffectUpgrade`) и пауза фоновой очистки Storage Sense во время игры. Всего модулей: **59**.
-- **Две новые темы** — `UNITY 6` (холодный графит с голубым акцентом) и `SOLAR FLARE` (тёплый янтарь). Всего тем: **14**.
-- **Плавнее интерфейс** — переход между разделами проявляется мягким снимком страницы; полосы прокрутки синхронизируются только по событию, а не 14 раз в секунду; шапка засыпает после бездействия; карточки получили градиент и блик по верхней кромке.
-- **Бережнее к чужим настройкам** — `GpuPreference=2` для Rust больше не затирает остальные флаги `UserGpuPreferences`, а откат возвращает исходную строку целиком.
-- **Больше самопроверок** — `-SelfTest` проверяет новые функции, адаптивную фильтрацию конваров (включая `fps.graph` и запасной полный набор), `-TestUi` — версию клиента и 14 тем.
-
-## Что было в 5.3
-
-- **Публичная страница «Почему это лучший открытый оптимизатор»** — [docs/WHY.md](docs/WHY.md): шесть проверяемых критериев, отличия от закрытых твикеров, политика обновлений и инструкция «проверь сам за 3 минуты».
-- **Понятное сравнение в README** — таблица «PURPLE RUSH / типичный закрытый твикер» без голословных обещаний: каждый пункт проверяется исходником и `-Verify`.
-- **Честные ограничения на видном месте** — отдельный раздел объясняет, что абсолютной гарантии отсутствия бана не существует, а безопасность обеспечивается отсутствием опасных векторов, а не обещаниями.
-- **Ссылка на релизы и бейдж версии** — сразу видно, что проект живёт и обновляется.
-- Функциональность 5.2 сохранена без изменений: плавный интерфейс, безопасная навигация и защита целостности клиента.
-
-## Что было в 5.2
-
-- **Плавность без нагрузки** — анимации шапки, кольца, графика и полос перерисовываются только когда это нужно. После остановки значения аниматор засыпает, а не крутит 66 кадров/с вхолостую. Прокрутка и переходы остаются плавными, но CPU и батарея не тратятся на статичную картинку.
-- **Безопасная навигация** — панель раздела перестраивается после выхода из обработчика клика (`Request-Group`), а не внутри него. Это убирает редкие подвисания и ошибки при быстром переключении разделов; повторный клик по активному разделу просто прокручивает страницу наверх.
-- **Более быстрый отклик** — каскад карточек ограничен восемью шагами и сокращён до 220 мс: длинные списки модулей больше не «доезжают» полторы секунды.
-- **Защита клиента игры** — в «НАСТРОЙКАХ» появились кнопки **«СВЕРИТЬ КЛИЕНТ RUST»** и **«ОБНОВИТЬ ЭТАЛОН»**. До и после оптимизации снимаются размер и время изменения `RustClient.exe`, `UnityPlayer.dll`, всех DLL/EXE в корне игры и файлов EasyAntiCheat. Совпадение снимков означает, что клиент не тронут.
-- **Политика «ничего в папке игры»** — очистка логов RUST внутри `steamapps\common\Rust` убрана полностью. В папке игры программа касается только официальных `cfg\client.cfg` и `cfg\keys.cfg`.
-- **Меньше лишних диалогов** — удалён дублирующий `Show-TextDialog`; отчёты, план и проверка клиента используют один диалог с копированием и корректным закрытием.
-- **Самопроверки** — `-SelfTest` проверяет снимок клиента, обнаружение изменённого файла, круговую проверку «эталон → сравнение», а `-TestUi` — отложенную навигацию.
-
-## Что было в 5.1
-
-- **Атомарное состояние** — `state.xml` теперь пишется во временный файл `.new`, подменяется одним `Move-Item`, а предыдущая версия остаётся в `.bak`. При повреждении или обрыве записи программа поднимает резервную копию, а не начинает с пустых настроек.
-- **Профили в JSON** — в «НАСТРОЙКАХ» появились кнопки **«ЭКСПОРТ ПРОФИЛЯ»** и **«ИМПОРТ ПРОФИЛЯ»**. Файл читаемый, без исполняемого кода: импортируются только логические флаги известных модулей, незнакомые ID пропускаются.
-- **Предпросмотр плана** — кнопка **«ПРОВЕРИТЬ ПЛАН ПЕРЕД ПРИМЕНЕНИЕМ»** на панели «ОБЗОР» показывает список включённых модулей по группам и отдельно выделяет рискованные. До нажатия «ОПТИМИЗИРОВАТЬ» ничего не меняется.
-- **Отчёт о надёжности** — кнопка **«ОТЧЁТ О НАДЁЖНОСТИ»** в «НАСТРОЙКАХ» и ключ `-Verify` показывают версию, путь и SHA256 исходника, число модулей и резервных копий, а также статический аудит по категориям: сетевые загрузки, внедрение в процесс, динамический код, изменение клиента игры. Ожидаемый результат — **ноль совпадений**; это можно перепроверить самостоятельно.
-- **Самопроверки** — `-SelfTest` дополнительно проверяет функции профилей и отчёта, экспорт/импорт с восстановлением флага, отказ от некорректного JSON и **нулевое** число опасных совпадений в собственном исходнике.
-
-## Что было в 5.0
-
-- **Полностью новый стартовый экран «ОБЗОР»** — анимированное кольцо готовности профиля, живой график CPU, карточки «Модули / Свободно на диске / RUST» и шесть быстрых действий: безопасный профиль, максимум, оптимизировать, откат, диагностика, темы.
-- **Новые анимированные контролы** — `RingGauge`, `Sparkline` и `StatCard` написаны на C# и работают на общем 15-мс аниматоре: плавные значения, бегущий блик, градиентная заливка графика.
-- **10 новых безопасных обратимых твиков** — Game Bar без оверлея, виджеты Windows 11, Copilot, Windows Recall, рекомендации и реклама в «Пуске», поиск без Bing, глобальные фоновые приложения, прозрачность, AutoPlay/AutoRun, защита от случайного залипания клавиш. Всего модулей: **57**.
-- **Две новые темы** — `AURORA` (бирюзово-фиолетовая) и `NEON NOIR` (розовый неон на графите). Всего: **12**.
-- **Навигация** — первым пунктом добавлен «ОБЗОР»; `Ctrl+1…9` переключает все девять разделов.
-- **Стабильность** — таймеры страниц останавливаются при переходе, живые контролы проверяются на `IsDisposed`, а `-TestUi` дополнительно проверяет кольцо, график, карточки и ненулевую оценку.
-
-## Что было в 4.2
-
-- **Ярлык на рабочем столе** — при первом запуске `RustOptimizer.bat` создаётся `PURPLE RUSH.lnk` с фирменной иконкой. Повторно ярлык не перезаписывается; в «НАСТРОЙКАХ» есть кнопка принудительного обновления.
-- **Иконка приложения** — фирменный `.ico` теперь используется в заголовке окна, на панели задач и в ярлыке (раньше окно показывало стандартную иконку PowerShell).
-- **Навигация с подсказками** — при наведении на раздел показывается описание и горячая клавиша; `Ctrl+1…9` переключает разделы, `Ctrl+R` обновляет статистику.
-- **Окно запоминает себя** — размер и позиция сохраняются между запусками и проверяются на видимость при отключении монитора.
-- **Защита от двойного запуска** — второй экземпляр не открывает копию, а поднимает уже работающее окно; это исключает конфликт при записи `client.cfg` и состояния.
-- **Стабильность и дизайн** — остановка всех таймеров при закрытии, журналирование ошибок вне UI-потока, скруглённые углы окна в Windows 11, акцентная линия в шапке и бейдж версии.
-- **Больше самопроверок** — `-SelfTest` дополнительно проверяет `ScrollStrip`, функции ярлыка и иконки.
-
-## Что было в 4.1
-
-- **Страница «КАРТИНКА»** — пресеты `BLOGGER VIVID`, `КИНО`, `НОЧЬ`, живой предпросмотр «до/после», применение гаммы Windows и запись официальных визуальных конваров в `client.cfg`.
-- **Панель NVIDIA/AMD** — программа определяет видеокарту, открывает нужную панель и даёт точные значения Digital Vibrance / Radeon Image Sharpening / Custom Color. Автоматизация панели и оверлеи намеренно не используются.
-- **Обратимая гамма** — перед изменением сохраняется исходная таблица дисплея; кнопка «ВЕРНУТЬ ЦВЕТ» восстанавливает её. В `client.cfg` меняются только управляемые строки, остальные настройки сохраняются.
-- **Исправлены конвары RUST** — `graphics.shafts` заменён на правильный `effects.shafts`, устаревшие ключи (`graphics.quality`, `global.render_scale`, `graphics.antialiasing`, `graphics.parallaxbuildings`, `global.pixel_scale` и др.) удалены из профиля максимальной оптимизации.
-- **Исправлена навигация** — 8 разделов больше не наезжают на блок «ПРОФИЛИ» при минимальной высоте окна.
-- **Больше самопроверок** — `-SelfTest` проверяет гамма-таблицы, пресеты и отсутствие неверных конваров, `-TestUi` проходит новую страницу.
-
-## Что было в 4.0
-
-- **Windows Care Engine** — 10 модулей очистки: кэш обновлений, дампы и WER, кэш браузеров, логи Steam/RUST, эскизы, WinSxS, `Windows.old`, Prefetch, журналы событий и глубокая очистка одной кнопкой.
-- **Страница «РЕМОНТ»** — проверка здоровья Windows и запуск штатных инструментов: SFC, DISM RestoreHealth / ComponentCleanup / Analyze, CHKDSK `/scan`, сброс Windows Update и сети, лечение WMI, сброс Store, пересборка кэша иконок, синхронизация времени, пересканирование драйверов, очередь печати, точка восстановления.
-- **Диагностика в один клик** — 15 проверок: права, uptime, ожидание перезагрузки, место на диске, SMART, WMI, службы обновления и времени, устройства с ошибками, события за 7 дней, дампы, TEMP, кэш обновлений, защита системы, сетевые адаптеры.
-- **10 тем** с живыми градиентами и анимацией: PURPLE RUSH, MIDNIGHT, EMERALD, CRIMSON, CYBERPUNK, ROYAL GOLD, ARCTIC, SAKURA, OBSIDIAN, TOXIC.
-- **Иконка и ярлык** — фирменная иконка `assets\rust-optimizer.ico` (16–256 px) и установщик ярлыка на рабочий стол и в меню «Пуск».
-
-## Возможности
-
-### Система
-
-- План питания и точный таймер 1 мс на время работы программы.
-- Приоритеты процессов, MMCSS, Game Mode, Game DVR / Xbox Game Bar.
-- HAGS, Power Throttling, парковка ядер, QoS для игрового процесса.
-- Отключение телеметрии, P2P-раздачи Delivery Optimization и лишних фоновых служб.
-- Дополнительно: глобальные оптимизации полного экрана (FSE), службы Xbox, быстрый запуск Windows.
-- Чистый интерфейс Windows: Game Bar без оверлея, виджеты, Copilot, Recall, рекомендации «Пуска», поиск без Bing, AutoPlay и прозрачность — всё обратимо.
-- Защита от случайного залипания/фильтрации клавиш и глобальное ограничение фоновых приложений.
-
-### Сеть
-
-- Отключение алгоритма Nagle, TCP-стек под игры, QoS.
-- Энергосбережение сетевого адаптера, сброс DNS-кэша.
-- Смена DNS-серверов с честным откатом.
-
-### RUST
-
-- Официальные переменные `cfg\client.cfg`: трава, тени, качество, дистанция, сглаживание.
-- Профиль игры, приоритет процесса, affinity, GPU-параметры.
-- Редактор официального `cfg\keys.cfg` с готовыми пресетами.
-- Запуск RUST через Steam с ожиданием `RustClient.exe`.
-- **Страница «КАРТИНКА»**: пресеты `BLOGGER VIVID`, `КИНО`, `НОЧЬ`, предпросмотр, обратимая гамма Windows, визуальные конвары `client.cfg` и пошаговая инструкция для панели NVIDIA/AMD/Intel.
-- Безопасность: exe/dll игры не изменяются, в процесс ничего не внедряется, Freestyle/ReShade и оверлеи не используются.
-
-### Очистка Windows
-
-| Модуль | Что делает |
+| Page | What it does |
 |---|---|
-| `deepclean` | Глубокая очистка: TEMP, Windows Temp, кэш обновлений, дампы, браузеры, Steam/RUST, эскизы, старые логи |
-| `updatecache` | Кэш Windows Update и Delivery Optimization |
-| `dumps` | Дампы, WER, `MEMORY.DMP`, `LiveKernelReports` |
-| `browsercache` | Только Cache/Code Cache/GPUCache и Service Worker cache; пароли и история не трогаются |
-| `gamejunk` | Логи и `*.dmp` Steam/RUST; `cfg` и сохранения остаются на месте |
-| `thumbcache` | `thumbcache_*.db` и `iconcache_*.db`; занятые файлы пропускаются |
-| `winsxs` | Безопасный `DISM /StartComponentCleanup` |
-| `oldwindows` | `Windows.old`, `$Windows.~BT`, `$Windows.~WS`, `$WinREAgent` |
-| `prefetchclean` | Prefetch и ReadyBoot |
-| `eventlogs` | Очистка журналов событий Windows |
+| **Обзор** | Hardware summary, detected game paths, one-click recommended profile, game launch, standby purge |
+| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, GC buffer), launch options, `.rop` profile import/export |
+| **FORTNITE** | `GameUserSettings.ini` + `Engine.ini` tweaks (frame limit, VSync, fullscreen, motion blur, bloom, lens flare, DOF, shadows, streaming pool), launch options |
+| **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity |
+| **Профили** | Save/load/import/export tweak profiles (`.rop`) |
+| **Настройки** | Theme, mandatory updates, auto-priority, auto-purge, data folders |
+| **Логи** | Live session log with levels, plus the on-disk log file |
 
-Все новые модули очистки **по умолчанию выключены**. Опасные действия (`oldwindows`, `eventlogs`, отключение служб) требуют явного включения и подтверждения.
+Every change is reversible:
 
-### Ремонт и диагностика
+* files are backed up to `%LOCALAPPDATA%\RustOptimizer\backups\<stamp>_<label>`
+  before the first write;
+* RUST keys are merged into the existing `client.cfg` and can be reverted;
+* FORTNITE entries live inside `; >>> RO:<id> >>>` … `; <<< RO:<id> <<<`
+  marker blocks that are removed on revert without touching anything else;
+* registry changes only target per-user keys (`HKCU`) unless elevation is
+  explicitly requested.
 
-- `SFC /scannow`, `DISM /RestoreHealth`, `DISM /StartComponentCleanup`, `DISM /AnalyzeComponentStore`.
-- `CHKDSK /scan` без перезагрузки.
-- Сброс Windows Update (службы + `SoftwareDistribution` + `Catroot2`).
-- Сброс Winsock/TCP-IP/DNS, лечение WMI, сброс Microsoft Store.
-- Пересборка кэша иконок, синхронизация времени, `pnputil /scan-devices`, сброс очереди печати.
-- Точка восстановления по кнопке; перед основной оптимизацией создаётся автоматически.
+## Safety
 
-### Интерфейс
+* No injection, no hooks, no memory reads/writes, no overlays.
+* Priorities are capped at `HIGH_PRIORITY_CLASS`; `REALTIME` is never used.
+* No `system()` / `cmd.exe` calls — only `CreateProcessW` with
+  `CREATE_NO_WINDOW`.
+* Network access only for the GitHub release check (can be disabled in
+  Settings) and for downloading an update after explicit confirmation.
+* Standby purge needs an elevated process; the app asks for it on demand and
+  keeps working (minus that one switch) when declined.
+* The manifest requests `asInvoker`, so Windows never auto-elevates the app.
 
-- 12 палитр, плитки тем с живым градиентом и бликом.
-- Двойная буферизация, пакетная перерисовка страниц, плавная прокрутка колесом.
-- Заметная полоса прокрутки со стрелками вверх/вниз для меню разделов и содержимого страниц; колесо мыши листает и список разделов.
-- Анимированные карточки модулей, строки диагностики, прогресс и спиннер.
-- Стартовая панель «ОБЗОР»: кольцевой индикатор готовности, живой график CPU, карточки состояния и быстрые действия.
-- Панель состояния: CPU, ОЗУ, свободное место на системном диске, статус RUST.
-- Отчёт о системе и отчёт о здоровье Windows — в буфер обмена.
-- Автозакрытие после запуска RUST (можно отключить).
-- Запоминание размера и позиции окна; иконка приложения в заголовке и на панели задач.
-- Горячие клавиши: `Ctrl+1…9` — разделы, `Ctrl+R` — обновить статистику.
-- Защита от двойного запуска: второй экземпляр поднимает уже открытое окно.
+## System requirements
 
-## Темы
+* Windows 10 1607+ or Windows 11, x64.
+* No runtime prerequisites: the executable statically links the CRT.
 
-`PURPLE RUSH` · `MIDNIGHT` · `EMERALD` · `CRIMSON` · `CYBERPUNK` · `ROYAL GOLD` · `ARCTIC` · `SAKURA` · `OBSIDIAN` · `TOXIC` · `AURORA` · `NEON NOIR`
+## Install
 
-Тема применяется сразу и сохраняется в `%ProgramData%\RustOptimizer\state.xml`. Кнопка «СЛУЧАЙНАЯ ТЕМА» выбирает любую палитру, кроме текущей.
+1. Download `RustOptimizer-win64.zip` from
+   [Releases](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest).
+2. Extract anywhere and run `RustOptimizer.exe`.
+3. Press **Найти игры** — Steam/Epic installs are located through the registry,
+   `libraryfolders.vdf`, `appmanifest_252490.acf` and Epic manifests.
 
-## Иконка и ярлык
+Optional: run as administrator to unlock the standby-list purge.
 
-Windows не позволяет встроить иконку в `.bat`, поэтому программа сама создаёт `.lnk`-ярлык:
+## Build from source
 
-- при первом запуске `RustOptimizer.bat` на рабочем столе появляется `PURPLE RUSH.lnk` с фирменной иконкой;
-- повторно ярлык не перезаписывается, если уже указывает на актуальный лаунчер;
-- обновить вручную можно кнопкой в «НАСТРОЙКАХ» или командой:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\RustOptimizer.ps1 -InstallShortcut
-```
-
-Скрипт `tools\install-shortcut.ps1` остаётся для ручного восстановления и умеет дополнительно создать ярлык в меню «Пуск»:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\install-shortcut.ps1
-```
-
-Ярлык запускает `RustOptimizer.bat`, рабочая папка и иконка задаются автоматически.
-
-Иконку можно пересобрать:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make-icon.ps1
-```
-
-## Требования
-
-- Windows 10/11.
-- Встроенный Windows PowerShell 5.1.
-- Права администратора для полной проверки и ремонта. Без прав интерфейс работает, но часть операций будет недоступна.
-- Для SFC/DISM/CHKDSK/WMI и сброса сети нужен администратор.
-
-## Запуск
+Requirements: Visual Studio 2022 with the C++ workload, CMake 3.21+.
 
 ```bat
-:: ПКМ -> Запуск от имени администратора (рекомендуется)
-RustOptimizer.bat
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DRO_WARNINGS_AS_ERRORS=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+build\Release\RustOptimizer.exe
 ```
 
-Или напрямую:
+The build is `/W4 /permissive- /utf-8` clean. The icon (`build\generated\app.ico`)
+is generated at build time by `tools/gen_icon.cpp` (GDI+) and compiled into the
+executable together with the version resource and the manifest — no binary icon
+is stored in the repository.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\RustOptimizer.ps1
-```
-
-Самопроверка без интерфейса:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\RustOptimizer.ps1 -SelfTest
-```
-
-Проверяемый отчёт о надёжности (версия, SHA256 исходника, резервные копии, статический аудит):
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\RustOptimizer.ps1 -Verify
-```
-
-UI-смоук-тест (окно само пройдёт по разделам и закроется):
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\src\RustOptimizer.ps1 -TestUi
-```
-
-## Сборка
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\rebuild-bat.ps1
-```
-
-Скрипт:
-
-1. склеивает `src\parts\*.ps1` в `src\RustOptimizer.ps1`;
-2. пишет читаемый `RustOptimizer.bat`;
-3. собирает одиночный `dist\RustOptimizer-standalone.bat` (base64 payload) для пользователей без папки с исходниками.
-
-Не редактируйте `src\RustOptimizer.ps1` вручную — правьте файлы в `src\parts\`.
-
-## Структура проекта
+### Command line
 
 ```text
-src/
-  parts/
-    00_header.ps1       константы, логирование, реестр, поиск Steam/RUST
-    05_app.ps1          ярлык с иконкой, один экземпляр, путь лаунчера
-    10_modules.ps1      реализации модулей оптимизации
-    15_cleaner.ps1      движок безопасной очистки Windows
-    16_repair.ps1       SFC/DISM/CHKDSK/WMI и восстановление
-    18_diagnostics.ps1  проверки здоровья Windows и быстрые исправления
-    19_picture.ps1      пресеты картинки, гамма, панель GPU
-    20_tweaks.ps1       список 64 модулей, Start-Optimization / Start-Rollback
-    21_fortnite.ps1     поиск Fortnite, официальные пресеты, INI и бэкап
-    30_controls.ps1     темы и анимированные контролы (C#)
-    32_profiles.ps1     экспорт/импорт профилей в JSON
-    33_trust.ps1        отчёт о надёжности, защита клиента, предпросмотр плана
-    34_dashboard.ps1    стартовая панель «ОБЗОР», оценка профиля
-    35_selftest.ps1     самопроверка
-    39_settings.ps1     14 тем, отчёт о системе, мониторинг
-    40_ui.ps1           окно, навигация, карточки, бинды
-    45_repair_ui.ps1    страница «РЕМОНТ И ДИАГНОСТИКА»
-    46_picture_ui.ps1   страница «КАРТИНКА»
-    47_fortnite_ui.ps1  страница «FORTNITE»: пресеты, запуск, проверка
-    50_actions.ps1      кнопки, таймеры, перезагрузка
-  RustOptimizer.ps1     собранный исходник (генерируется)
-RustOptimizer.bat       читаемый лаунчер для GitHub
-rebuild-bat.ps1         сборка src + лаунчер + standalone
-assets/                 app-icon.png и multiresolution .ico
-tools/                  make-icon.ps1, install-shortcut.ps1
-docs/SAFETY.md          что чистится, риски ремонта и откат
-docs/WHY.md             почему проект лучший по проверяемым критериям
-dist/                   одиночный .bat (создаётся при сборке, в git не входит)
-.github/workflows/ci.yml сборка, синтаксис и SelfTest в CI
+RustOptimizer.exe --version    print the version
+RustOptimizer.exe --selftest   hardware/game detection report, log paths
+RustOptimizer.exe --help
 ```
 
-## Группы модулей
+### Mandatory self-update
 
-| Группа | Модулей | Назначение |
-|---|---:|---|
-| Система | 29 | питание, приоритеты, службы, телеметрия, FSE, Xbox, быстрый запуск, Game Bar, поиск, прозрачность, AutoPlay, окна Windows 11, Storage Sense |
-| Сеть | 5 | Nagle, TCP, QoS, DNS, энергосбережение адаптера |
-| RUST | 6 | cfg, приоритет, affinity, GPU, запуск, страница «КАРТИНКА» |
-| Очистка | 19 | TEMP, кэши, дампы, Steam/RUST, WinSxS, журналы, виджеты, Copilot, Recall, рекомендации, фоновые приложения |
-| **Всего** | **59** | + официальные бинды `keys.cfg` |
+Every start the app queries
+`https://api.github.com/repos/proot9078-ux/Rust-Optimizer/releases/latest` and
+compares the tag with its own version. There is no "later" button: when a newer
+build exists the window locks into a progress card while the release is
 
-## Безопасность и EAC
+1. downloaded into `%LOCALAPPDATA%\RustOptimizer\staging`,
+2. verified against `SHA256SUMS.txt` when the release publishes one,
+3. unpacked, and
+4. swapped in by the `--apply-update` helper, which waits for the UI to exit,
+   renames the old binary, retries `MoveFileEx` until the image is released,
+   refreshes the desktop and Start menu shortcuts, launches the new build and
+   deletes the old executable and the staging folder.
 
-Программа **не** изменяет `RustClient.exe` / `*.dll`, не внедряется в процесс, не эмулирует ввод, не использует оверлеи. Работает только с официальными файлами `cfg\` и стандартными средствами Windows.
+Failed attempts (offline, rate limit, corrupt archive) are retried automatically
+with the error shown in the card, so the update always lands on a later start.
+The check toggle was removed from Settings; updates are mandatory.
 
-Страница «КАРТИНКА» использует три безопасных канала: гамма-таблица Windows (обратима, сохраняется исходная), официальные конвары `client.cfg` (с бэкапом управляемых строк) и настройки панели драйвера. **Freestyle, ReShade, Game Filter и любые фильтры поверх игры не используются** — они внедряются в кадр и могут конфликтовать с EAC. Гамма действует на основной монитор и сбрасывается после перезагрузки Windows или при переключении полноэкранного режима; постоянный вариант — Digital Vibrance / Radeon Custom Color в панели драйвера.
+## Tests and CI
 
-> Полностью убрать траву официальными настройками нельзя — это меняет баланс игры. Модуль использует только документированные конвары клиента. Шейдеры и моды, вырезающие траву, не поддерживаются: это вмешательство в клиент и риск бана.
+* `ro_tests` (Catch2) covers string/UTF-16 conversion, filesystem helpers, the
+  INI engine (order/comments/marker blocks/CRLF), Steam VDF/ACF parsing, launch
+  options, version comparison and GitHub release JSON parsing.
+* `.github/workflows/build.yml` builds with MSVC, runs `ctest`, smoke-tests
+  `--version`/`--selftest`, uploads the artifact and publishes a release on
+  `v*` tags.
+* `tools/release.ps1 -Version 8.0.1` builds, packages, hashes and publishes
+  locally through the GitHub CLI.
 
-Перед оптимизацией создаётся точка восстановления и резервные копии реестра. Откат восстанавливает применённые модули, но лучший «откат всего» — точка восстановления Windows.
+## Repository layout
 
-Подробно о путях очистки, рисках ремонта и откате: [docs/SAFETY.md](docs/SAFETY.md).
+```text
+include/ro/        public headers (core, games, tweaks, net, ui)
+src/core/          strings, filesystem, JSON, logging, Win32 RAII, process,
+                   affinity, memory, SHA-256, settings, hardware
+src/games/         Steam/Epic locators
+src/tweaks/        INI engine, RUST/FORTNITE/system tweaks, profiles
+src/net/           WinHTTP client, zip, updater
+src/ui/            theme, widgets, pages, window
+src/icon.cpp       programmatic icon (window + .ico)
+tools/             icon generator, release script
+tests/             Catch2 suites
+third_party/       nlohmann/json, miniz, Catch2 (vendored)
+```
 
-## Ограничения
+The legacy PowerShell sources remain under `src/` for historical reference and
+are no longer shipped in releases.
 
-- Диагностика и ремонт — это стандартные проверки Windows, а не гарантия исправления любой ошибки.
-- SFC, DISM и CHKDSK могут занимать 10–30 минут; окно закрывать не нужно.
-- ACPI-температура доступна не на всех ПК; Windows не отдаёт температуру ядер CPU/GPU без фирменного драйвера.
-- Некоторые операции (сброс сети, пересборка иконок, очистка WinSxS) требуют перезагрузки или перезапуска Explorer.
-- Гамма-пресеты действуют на основной монитор и могут сбрасываться после перезагрузки, смены разрешения или выхода из полноэкранной игры. Постоянный цвет настраивается в панели NVIDIA/AMD.
-- Значения реестра и служб могут отличаться на разных сборках Windows; откат возвращает сохранённые исходные значения там, где это предусмотрено.
-- Набор конваров подстраивается под `cfg\client.cfg` установленной версии Rust. Если игра ещё ни разу не запускалась и файл не создан, применяется проверенный базовый набор; после первого запуска кнопка «ПРОВЕРИТЬ СОВМЕСТИМОСТЬ CFG» покажет точный список поддерживаемых ключей.
+## License
 
-## Политика обновлений
-
-Проект обновляется постоянно и публично:
-
-- каждая версия получает запись в [CHANGELOG.md](CHANGELOG.md) и тег релиза на GitHub;
-- CI собирает исходник, проверяет синтаксис и запускает `-SelfTest` на каждый push;
-- исправления безопасности и стабильности выходят вне очереди;
-- исходник и SHA256 всегда доступны — обновление не «ломает доверие», а подтверждает его.
-
-Актуальность проверяется за минуту: откройте [последний релиз](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest), сравните версию и SHA256 из `-Verify`, посмотрите дату последнего коммита.
-
-## Why PURPLE RUSH (short English)
-
-PURPLE RUSH is an open-source Windows optimizer for **RUST**, written in readable Windows PowerShell 5.1 with a WinForms UI. Version 6.0 detects the installed Rust 2026 / Unity 6.3 client, reads its `cfg\client.cfg` and applies only convar keys that this game build actually uses — unknown keys are skipped instead of breaking after an update. It never modifies `RustClient.exe` or game DLLs, never touches process memory, never installs overlays (ReShade/Freestyle), and never downloads binaries. It only changes Windows settings, official `cfg\client.cfg` / `cfg\keys.cfg`, and documented driver-panel options.
-
-Every change is reversible: restore point, registry/cfg backups, applied-module journal, one-click rollback and JSON profiles. Before and after optimization the app snapshots game-client metadata and proves the client is unchanged. `-Verify` prints the source SHA256 and a static audit (network downloads, injection, dynamic code, client modification) that must be **zero**; `-SelfTest` and `-TestUi` validate logic and UI.
-
-There is no absolute ban guarantee from any tool — bans are decided by Facepunch. But PURPLE RUSH removes the actual detection vectors instead of hiding them. Read [docs/WHY.md](docs/WHY.md) and verify everything yourself.
-
-## Участие
-
-См. [CONTRIBUTING.md](CONTRIBUTING.md). PR и issues приветствуются.
-
-## Лицензия
-
-[MIT](LICENSE) © 2026 PURPLE RUSH contributors.
+MIT — see [LICENSE](LICENSE).
