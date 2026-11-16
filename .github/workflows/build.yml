@@ -30,8 +30,8 @@ jobs:
 
       - name: Configure (CMake + MSVC)
         run: >
-          cmake -S . -B $env:BUILD_DIR -G "Visual Studio 17 2022" -A x64
-          -DCMAKE_BUILD_TYPE=$env:CONFIG -DRO_BUILD_TESTS=ON -DRO_WARNINGS_AS_ERRORS=ON
+          cmake -S . -B $env:BUILD_DIR -A x64
+          -DRO_BUILD_TESTS=ON -DRO_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build $env:BUILD_DIR --config $env:CONFIG --parallel
