@@ -1433,7 +1433,8 @@ private:
 
     std::filesystem::path pick_save(const wchar_t* name, const wchar_t* filter) {
         wchar_t file[MAX_PATH]{};
-        std::wcsncpy(file, name, MAX_PATH - 1);
+        const std::size_t name_len = (std::min)(std::wcslen(name), static_cast<std::size_t>(MAX_PATH - 1));
+        std::copy_n(name, name_len, file);
         OPENFILENAMEW ofn{};
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = hwnd_;
