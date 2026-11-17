@@ -21,6 +21,8 @@
 #include <vector>
 
 #include "ro/backup.hpp"
+#include "ro/cleaner.hpp"
+#include "ro/diagnostics.hpp"
 #include "ro/fs.hpp"
 #include "ro/game_finder.hpp"
 #include "ro/hardware.hpp"
@@ -50,6 +52,7 @@ constexpr int kFooterHeight = 92;
 constexpr int kPadding = 28;
 constexpr int kRowGap = 10;
 constexpr UINT_PTR kTimerId = 1;
+constexpr UINT_PTR kAnimTimerId = 2;
 constexpr UINT WM_APP_REFRESH = WM_APP + 1;
 constexpr UINT WM_APP_QUIT = WM_APP + 2;
 
@@ -59,8 +62,9 @@ struct NavItem {
 };
 
 const NavItem kNav[] = {
-    {"overview", L"Обзор"},   {"rust", L"RUST"},        {"fortnite", L"FORTNITE"}, {"system", L"Система"},
-    {"profiles", L"Профили"}, {"settings", L"Настройки"}, {"logs", L"Логи"},
+    {"overview", L"Обзор"},   {"rust", L"RUST"},          {"fortnite", L"FORTNITE"},
+    {"system", L"Система"},   {"cleaner", L"Очистка"},    {"profiles", L"Профили"},
+    {"diagnostics", L"Диагностика"}, {"settings", L"Настройки"}, {"logs", L"Логи"},
 };
 
 struct Shared {
@@ -129,7 +133,8 @@ public:
 
     bool create() {
         is_admin_ = win::is_admin();
-        theme_ = for_mode(state_->settings.dark_theme);
+        state_->settings.theme = normalise_theme(state_->settings.theme);
+        theme_ = preset(state_->settings.theme);
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -164,6 +169,8 @@ public:
     // the desktop shortcut refresh and the mandatory update worker.
     void start_background() {
         ::SetTimer(hwnd_, kTimerId, 4000, nullptr);
+        // 60 fps animation timer for smooth scrolling and page transitions.
+        ::SetTimer(hwnd_, kAnimTimerId, 16, nullptr);
 
         std::thread([]() {
             // Keep the desktop / Start menu icon in place even if the user moved
@@ -173,7 +180,16 @@ public:
             update::cleanup_stale(fsx::exe_path());
         }).detach();
 
-        std::thread([shared = state_]() { update_worker(shared); }).detach();
+        start_update_check();
+    }
+
+    // Manual trigger (F5 / Settings button). Safe to call anytime: the worker
+    // exits immediately when a mandatory install is already running.
+    void start_update_check() {
+        if (state_->update_mandatory.load()) return;
+        set_status(L"Проверяю обновления на GitHub…");
+        auto shared = state_;
+        std::thread([shared]() { update_worker(shared); }).detach();
     }
 
     // Mandatory update: check, download, verify, swap and relaunch. There is no
@@ -352,14 +368,72 @@ private:
                 scroll_by(-static_cast<float>(delta) / 120.0f * 64.0f);
                 return 0;
             }
+            case WM_KEYDOWN: {
+                // Keyboard scrolling: essential when the wheel/touchpad fails.
+                const float step = scroll_view_h_ * 0.9f;
+                switch (wp) {
+                    case VK_DOWN:
+                        scroll_by(56.0f);
+                        return 0;
+                    case VK_UP:
+                        scroll_by(-56.0f);
+                        return 0;
+                    case VK_NEXT:
+                        scroll_by(step);
+                        return 0;
+                    case VK_PRIOR:
+                        scroll_by(-step);
+                        return 0;
+                    case VK_HOME:
+                        scroll_to(0.0f);
+                        return 0;
+                    case VK_END:
+                        scroll_to(max_scroll_);
+                        return 0;
+                    case VK_F5:
+                        start_update_check();
+                        return 0;
+                    default:
+                        break;
+                }
+                // Ctrl+1..9 jumps straight to a page.
+                if ((::GetKeyState(VK_CONTROL) & 0x8000) && wp >= '1' && wp <= '9') {
+                    const int index = static_cast<int>(wp - '1');
+                    if (index < static_cast<int>(pages_.size())) {
+                        page_index_ = index;
+                        page_anim_ = 0.0f;
+                        ::InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                    return 0;
+                }
+                break;
+            }
             case WM_LBUTTONDOWN: {
                 ::SetCapture(hwnd_);
                 click_x_ = GET_X_LPARAM_(lp);
                 click_y_ = GET_Y_LPARAM_(lp);
+                const float x = static_cast<float>(click_x_) / scale_;
+                const float y = static_cast<float>(click_y_) / scale_;
+                if (!state_->update_mandatory.load() && scrollbar_active_ &&
+                    scroll_track_.contains(x, y)) {
+                    if (scroll_thumb_.contains(x, y)) {
+                        scroll_drag_ = true;
+                        scroll_drag_offset_ = y - scroll_thumb_.y;
+                    } else {
+                        // Click above/below the thumb pages the content.
+                        const float step = scroll_view_h_ * 0.9f;
+                        scroll_by(y < scroll_thumb_.y ? -step : step);
+                    }
+                }
                 return 0;
             }
             case WM_LBUTTONUP: {
                 ::ReleaseCapture();
+                if (scroll_drag_) {
+                    scroll_drag_ = false;
+                    ::InvalidateRect(hwnd_, nullptr, FALSE);
+                    return 0;
+                }
                 on_click(GET_X_LPARAM_(lp), GET_Y_LPARAM_(lp));
                 return 0;
             }
@@ -372,6 +446,7 @@ private:
             }
             case WM_TIMER:
                 if (wp == kTimerId) tick();
+                else if (wp == kAnimTimerId) tick_anim();
                 return 0;
             case WM_APP_REFRESH:
                 refresh_pages();
@@ -399,6 +474,7 @@ private:
                 state_->closing = true;
                 state_->hwnd = nullptr;
                 ::KillTimer(hwnd_, kTimerId);
+                ::KillTimer(hwnd_, kAnimTimerId);
                 ::PostQuitMessage(0);
                 return 0;
             default:
@@ -440,11 +516,17 @@ private:
         save_settings_locked();
     }
 
-    bool toggle(const std::string& page, const std::string& row) {
+    bool toggle(const std::string& page, const std::string& row, bool current) {
         std::lock_guard<std::mutex> lock(state_->mutex);
         const std::string key = page + "." + row;
         auto it = state_->toggles.find(key);
-        if (it == state_->toggles.end()) return false;
+        if (it == state_->toggles.end()) {
+            // First click on a row that has no saved value: trust the state the
+            // user sees and store the opposite.
+            state_->toggles[key] = !current;
+            save_settings_locked();
+            return !current;
+        }
         it->second = !it->second;
         save_settings_locked();
         return it->second;
@@ -461,6 +543,7 @@ private:
         // The worker thread updates games/toggles/update info under the mutex;
         // snapshot everything the page builder reads.
         PageContext ctx;
+        std::wstring last_page;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             ctx.settings = &state_->settings;
@@ -472,11 +555,23 @@ private:
             ctx.update_available = state_->update_available;
             ctx.latest_version = state_->latest_version;
             ctx.steam_dir = state_->games.steam.steam_dir;
+            ctx.theme_id = state_->settings.theme;
+            last_page = state_->settings.last_page;
             ctx.admin = is_admin_;
             pages_ = build_pages(ctx);
         }
         if (pages_.empty()) page_index_ = 0;
         else if (page_index_ >= static_cast<int>(pages_.size())) page_index_ = 0;
+        // Restore the page the user closed the app on (once per session).
+        if (!page_restored_ && !last_page.empty()) {
+            for (std::size_t i = 0; i < pages_.size(); ++i) {
+                if (pages_[i].id == str::narrow(last_page)) {
+                    page_index_ = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+        page_restored_ = true;
     }
 
     // ---------------------------------------------------------------- render
@@ -551,8 +646,10 @@ private:
         draw_sidebar(p, height);
 
         const Page& page = pages_[static_cast<std::size_t>(page_index_)];
-        const float content_x = kSidebarWidth;
-        const float content_w = width - kSidebarWidth;
+        // Page slide-in: rows ease in from the right after navigation.
+        const float slide = (1.0f - page_anim_) * 22.0f;
+        const float content_x = kSidebarWidth + slide;
+        const float content_w = width - kSidebarWidth - slide;
 
         // Header.
         p.text(page.title, Rect{content_x + kPadding, 26, content_w - kPadding * 2, 40}, theme.text, 27, 600, 0,
@@ -572,8 +669,11 @@ private:
         const float footer_h = page.has_apply ? kFooterHeight : 40.0f;
         const float view_top = kHeaderHeight;
         const float view_bottom = height - footer_h;
+        const float view_h = view_bottom - view_top;
+        scroll_view_h_ = view_h;
         float y = view_top - scroll_for(page.id);
-        const float row_w = content_w - kPadding * 2;
+        // Right margin reserved for the scrollbar so rows never slide under it.
+        const float row_w = content_w - kPadding * 2 - 16.0f;
         std::vector<Hit>& hits = hits_;
 
         rt_->PushAxisAlignedClip(D2D1::RectF(content_x, view_top, width, view_bottom),
@@ -597,6 +697,10 @@ private:
         const float content_end = y + scroll_for(page.id);
         max_scroll_ = (std::max)(0.0f, content_end - (view_bottom - view_top) + 24.0f);
         if (scroll_for(page.id) > max_scroll_) scroll_[page.id] = max_scroll_;
+        if (scroll_target_for(page.id) > max_scroll_) scroll_target_[page.id] = max_scroll_;
+
+        // Scrollbar last so it draws above clipped content.
+        draw_scrollbar(p, width, view_top, view_bottom);
 
         // Footer.
         if (page.has_apply) draw_footer(p, page, width, height, hits);
@@ -632,7 +736,7 @@ private:
             status = state_->update_status;
             error = state_->update_error;
         }
-        const int percent = state_->update_progress.load();
+        const int percent = static_cast<int>(display_progress_ + 0.5f);
         const bool installing = state_->update_installing.load();
 
         const float card_w = 560.0f;
@@ -834,19 +938,86 @@ private:
         return it == scroll_.end() ? 0.0f : it->second;
     }
 
+    float scroll_target_for(const std::string& page) const {
+        const auto it = scroll_target_.find(page);
+        if (it != scroll_target_.end()) return it->second;
+        return scroll_for(page);
+    }
+
+    // Wheel / keyboard input updates the target; the animation timer eases the
+    // visible offset towards it, so long pages glide instead of jumping.
     void scroll_by(float delta) {
         if (pages_.empty()) return;
         const std::string id = pages_[static_cast<std::size_t>(page_index_)].id;
-        scroll_[id] = std::clamp(scroll_for(id) + delta, 0.0f, (std::max)(0.0f, max_scroll_));
+        scroll_target_[id] =
+            std::clamp(scroll_target_for(id) + delta, 0.0f, (std::max)(0.0f, max_scroll_));
         ::InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Dragging the thumb must track the cursor exactly, so it sets both values.
+    void scroll_to(float value) {
+        if (pages_.empty()) return;
+        const std::string id = pages_[static_cast<std::size_t>(page_index_)].id;
+        const float clamped = std::clamp(value, 0.0f, (std::max)(0.0f, max_scroll_));
+        scroll_[id] = clamped;
+        scroll_target_[id] = clamped;
+        ::InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Scrollbar geometry is recomputed on every paint, so the thumb always
+    // matches the current content height.
+    void draw_scrollbar(Painter& p, float width, float view_top, float view_bottom) {
+        scrollbar_active_ = false;
+        scroll_track_ = Rect{};
+        scroll_thumb_ = Rect{};
+        const float view_h = view_bottom - view_top;
+        if (max_scroll_ <= 0.5f || view_h < 60.0f) {
+            scroll_drag_ = false;
+            return;
+        }
+        const float track_w = 8.0f;
+        const Rect track{width - 12.0f - track_w, view_top + 6.0f, track_w, view_h - 12.0f};
+        if (track.h < 24.0f) return;
+        scrollbar_active_ = true;
+        scroll_track_ = track;
+        p.fill_round(track, track_w * 0.5f, theme_.toggle_off);
+
+        const float content_h = view_h + max_scroll_;
+        float thumb_h = track.h * (view_h / content_h);
+        thumb_h = std::clamp(thumb_h, 40.0f, track.h);
+        const std::string id = pages_.empty() ? std::string() : pages_[static_cast<std::size_t>(page_index_)].id;
+        const float ratio = max_scroll_ <= 0.0f ? 0.0f : scroll_for(id) / max_scroll_;
+        const Rect thumb{track.x, track.y + ratio * (track.h - thumb_h), track_w, thumb_h};
+        scroll_thumb_ = thumb;
+        const D2D1_COLOR_F color = scroll_drag_ ? theme_.accent
+                                  : scrollbar_hover_ ? theme_.text_dim
+                                                     : theme_.text_muted;
+        p.fill_round(thumb, track_w * 0.5f, color);
+    }
+
+    void drag_scroll_to(float py) {
+        if (!scrollbar_active_) return;
+        const float span = scroll_track_.h - scroll_thumb_.h;
+        if (span <= 0.0f) return;
+        const float rel = std::clamp(py - scroll_drag_offset_ - scroll_track_.y, 0.0f, span);
+        scroll_to(rel / span * max_scroll_);
     }
 
     // ---------------------------------------------------------------- input
     void on_mouse_move(int px, int py) {
         const float x = static_cast<float>(px) / scale_;
         const float y = static_cast<float>(py) / scale_;
+        if (scroll_drag_) {
+            drag_scroll_to(y);
+            return;
+        }
+        const bool over_bar = scrollbar_active_ && scroll_track_.contains(x, y);
+        if (over_bar != scrollbar_hover_) {
+            scrollbar_hover_ = over_bar;
+            ::InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         int new_hover = -1;
-        bool hand = false;
+        bool hand = over_bar;
         for (std::size_t i = 0; i < hits_.size(); ++i) {
             if (!hits_[i].interactive) continue;
             if (hits_[i].rect.contains(x, y)) {
@@ -890,6 +1061,7 @@ private:
             const Rect item{14, 92.0f + i * 46.0f, kSidebarWidth - 28, 42};
             if (item.contains(x, y)) {
                 page_index_ = i;
+                page_anim_ = 0.0f;
                 ::InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
@@ -912,20 +1084,50 @@ private:
             for (std::size_t i = 0; i < pages_.size(); ++i) {
                 if (pages_[i].id == id) {
                     page_index_ = static_cast<int>(i);
+                    page_anim_ = 0.0f;
+                    {
+                        std::lock_guard<std::mutex> lock(state_->mutex);
+                        state_->settings.last_page = str::widen(id);
+                        save_settings_locked();
+                    }
                     ::InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
                 }
             }
             return;
         }
+        if (str::starts_with(action, "theme:")) {
+            const std::string id = normalise_theme(action.substr(6));
+            {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                state_->settings.theme = id;
+                state_->settings.dark_theme = preset(id).dark;
+                save_settings_locked();
+            }
+            theme_ = preset(id);
+            refresh_pages();
+            set_status(L"Тема применена: " + std::wstring(theme_title(id)));
+            log::info("ui: theme = " + id);
+            ::InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (str::starts_with(action, "toggle:")) {
             const auto parts = str::split(action.substr(7), ':');
             if (parts.size() < 2) return;
-            const bool value = toggle(parts[0], parts[1]);
-            // Immediate side effects for the switches that must react at once.
-            if (parts[0] == "settings" && parts[1] == "dark_theme") {
-                theme_ = for_mode(value);
-                state_->settings.dark_theme = value;
+            bool current = false;
+            for (const auto& page : pages_) {
+                if (page.id != parts[0]) continue;
+                for (const auto& row : page.rows) {
+                    if (row.id == parts[1] && row.kind == RowKind::Toggle) current = row.on;
+                }
+            }
+            const bool value = toggle(parts[0], parts[1], current);
+            // Keep the in-memory row in sync so the switch animates immediately.
+            for (auto& page : pages_) {
+                if (page.id != parts[0]) continue;
+                for (auto& row : page.rows) {
+                    if (row.id == parts[1] && row.kind == RowKind::Toggle) row.on = value;
+                }
             }
             log::info(std::string("ui: ") + parts[0] + "." + parts[1] + (value ? " = on" : " = off"));
             ::InvalidateRect(hwnd_, nullptr, FALSE);
@@ -950,13 +1152,13 @@ private:
         state_->status = text;
     }
 
-    void run_async(const std::wstring& label, std::function<std::wstring()> job) {
+    void run_async(const std::wstring& label, std::function<std::wstring()> job, bool minimize_after = false) {
         if (state_->busy.exchange(true)) return;
         state_->progress = 3;
         set_status(label);
         ::InvalidateRect(hwnd_, nullptr, FALSE);
         auto shared = state_;
-        std::thread([shared, label, job = std::move(job)]() mutable {
+        std::thread([shared, label, minimize_after, job = std::move(job)]() mutable {
             std::wstring result;
             try {
                 result = job();
@@ -966,13 +1168,19 @@ private:
                 result = L"Неизвестная ошибка";
             }
             if (result.empty()) result = label;
+            bool minimize = false;
             {
                 std::lock_guard<std::mutex> lock(shared->mutex);
                 shared->status = result;
+                minimize = minimize_after && shared->settings.minimize_on_apply;
             }
             shared->progress = 100;
             shared->busy = false;
-            if (!shared->closing.load() && shared->hwnd) ::PostMessageW(shared->hwnd, WM_APP_REFRESH, 0, 0);
+            const HWND hwnd = shared->hwnd;
+            if (!shared->closing.load() && hwnd) {
+                if (minimize) ::PostMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+                ::PostMessageW(hwnd, WM_APP_REFRESH, 0, 0);
+            }
         }).detach();
     }
 
@@ -992,6 +1200,11 @@ private:
         o.shadows_off = get("shadows_off", false);
         o.half_res_sss = get("half_res_sss", true);
         o.pixellight_off = get("pixellight_off", true);
+        o.depth_of_field_off = get("dof_off", true);
+        o.motion_blur_off = get("motion_blur_off", true);
+        o.parallax_off = get("parallax_off", false);
+        o.shafts_off = get("shafts_off", true);
+        o.chromatic_off = get("chromatic_off", true);
         o.gc_buffer = get("gc_buffer", false);
         o.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024 * 1024 * 1024 ? 4096 : 2048;
         o.launch_options = rust::recommended_launch_options(
@@ -1032,7 +1245,7 @@ private:
             for (const auto& note : report.notes) log::info("rust: " + note);
             if (report.ok) return L"client.cfg обновлён. Бэкап: " + str::widen(report.backup_dir);
             return L"Не удалось применить client.cfg — подробности в журнале";
-        });
+        }, true);
     }
 
     void apply_fortnite() {
@@ -1043,7 +1256,7 @@ private:
             for (const auto& note : report.notes) log::info("fortnite: " + note);
             if (report.ok) return L"Конфиги Fortnite обновлены. Бэкап: " + str::widen(report.backup_dir);
             return L"Не удалось применить конфиги Fortnite — подробности в журнале";
-        });
+        }, true);
     }
 
     void apply_system() {
@@ -1092,26 +1305,24 @@ private:
             }
             if (ok == 0) return std::wstring(L"Изменений нет или не хватает прав — смотрите журнал");
             return str::wfmt(L"Системные твики применены: %d", ok);
-        });
+        }, true);
     }
 
     void apply_settings_page() {
         // Read the switch states before taking the lock: is_on() locks as well and
         // std::mutex is not recursive.
-        const bool dark = is_on("settings", "dark_theme");
         const bool minimize = is_on("settings", "minimize_on_apply");
         const bool priority = is_on("settings", "autostart_priority");
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
-            state_->settings.dark_theme = dark;
+            state_->settings.minimize_on_apply = minimize;
             // Updates are mandatory: the switch was removed from the UI, but an
             // older settings.json may still carry "false".
             state_->settings.check_updates = true;
-            state_->settings.minimize_on_apply = minimize;
             state_->settings.auto_priority = priority;
             save_settings_locked();
         }
-        theme_ = for_mode(dark);
+        refresh_pages();
         set_status(L"Настройки сохранены");
         ::InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -1162,7 +1373,7 @@ private:
             }
             if (ok == 0) return std::wstring(L"Изменений нет или не хватает прав — смотрите журнал");
             return str::wfmt(L"Профиль применён: %d шагов", ok);
-        });
+        }, true);
     }
 
     void execute(const std::string& id) {
@@ -1214,6 +1425,10 @@ private:
             return;
         }
         if (id == "open_rust_cfg") {
+            if (state_->games.rust.exe_path.empty()) {
+                set_status(L"RUST не найден — сначала выполните поиск игр");
+                return;
+            }
             const auto paths = rust::resolve_paths(state_->games.rust.exe_path);
             std::string error;
             if (!system_tweaks::open_config_folder(paths.cfg_dir.wstring(), error)) log::warn(error);
@@ -1227,6 +1442,10 @@ private:
             return;
         }
         if (id == "revert_rust") {
+            if (state_->games.rust.exe_path.empty()) {
+                set_status(L"RUST не найден — откатывать нечего");
+                return;
+            }
             const auto paths = rust::resolve_paths(state_->games.rust.exe_path);
             run_async(L"Откатываю client.cfg…", [paths]() -> std::wstring {
                 const auto report = rust::revert(paths, {});
@@ -1299,6 +1518,11 @@ private:
                     set("rust", "shadows_off", "shadows_off", o.shadows_off);
                     set("rust", "half_res_sss", "half_res_sss", o.half_res_sss);
                     set("rust", "pixellight_off", "pixellight_off", o.pixellight_off);
+                    set("rust", "dof_off", "depth_of_field_off", o.depth_of_field_off);
+                    set("rust", "motion_blur_off", "motion_blur_off", o.motion_blur_off);
+                    set("rust", "parallax_off", "parallax_off", o.parallax_off);
+                    set("rust", "shafts_off", "shafts_off", o.shafts_off);
+                    set("rust", "chromatic_off", "chromatic_off", o.chromatic_off);
                     set("rust", "gc_buffer", "gc_buffer", o.gc_buffer);
                 } else {
                     const auto o = fortnite::from_json(opts);
@@ -1316,6 +1540,7 @@ private:
                 save_settings_locked();
             }
             set_status(L"Профиль " + str::widen(wanted) + L" загружен");
+            refresh_pages();
             ::InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1365,41 +1590,73 @@ private:
             return;
         }
         if (id == "update_check") {
-            run_async(L"Проверяю обновления на GitHub…", [this]() -> std::wstring {
-                net::Client client;
-                const auto result = update::check(client, kGithubOwner, kGithubRepo, kVersion);
-                if (!result.ok) return L"Обновление: " + str::widen(result.error);
-                {
-                    std::lock_guard<std::mutex> lock(state_->mutex);
-                    state_->update_available = result.update_available;
-                    state_->latest_version = result.latest_version;
-                }
-                if (!result.update_available) return L"Установлена последняя версия (" + str::widen(kVersion) + L")";
-                // Fetch and verify the artifact right away: the install button then
-                // only has to swap the binary.
-                auto staged = update::download_and_stage(client, result.release, fsx::staging_dir(), nullptr,
-                                                         nullptr);
-                if (!staged.ok) return L"Доступна версия " + str::widen(result.latest_version) +
-                                       L", но загрузка не удалась: " + str::widen(staged.error);
-                state_->pending_update = staged.staged_exe;
-                return L"Версия " + str::widen(result.latest_version) + L" загружена и проверена — нажмите «Установить»";
-            });
+            // Same mandatory path the startup worker uses: the card appears and
+            // installs the release without any extra confirmation.
+            start_update_check();
             return;
         }
         if (id == "update_install") {
-            if (state_->pending_update.empty()) {
-                set_status(L"Сначала проверьте обновления");
+            // Legacy action kept for compatibility: the mandatory worker handles
+            // download and install, so just restart the check.
+            start_update_check();
+            return;
+        }
+        if (id == "cleaner_scan" || id == "cleaner_clean") {
+            std::vector<std::string> ids;
+            {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                for (const auto& target : clean::targets()) {
+                    const auto it = state_->toggles.find("cleaner." + target.id);
+                    if (it == state_->toggles.end() || it->second) ids.push_back(target.id);
+                }
+            }
+            if (ids.empty()) {
+                set_status(L"Не выбрано ни одного пункта очистки");
                 return;
             }
-            const auto staged = state_->pending_update;
-            const auto target = fsx::exe_path();
-            run_async(L"Устанавливаю обновление…", [staged, target]() -> std::wstring {
-                if (update::spawn_applier(staged, target)) {
-                    ::PostMessageW(nullptr, WM_NULL, 0, 0);
-                    return L"Обновление подготовлено — приложение перезапустится";
-                }
-                return L"Не удалось запустить установщик обновления";
+            const bool remove = id == "cleaner_clean";
+            if (remove) {
+                const int answer = ::MessageBoxW(hwnd_,
+                                                 L"Удалить выбранные временные файлы и кэши?\n"
+                                                 L"Конфиги и сохранения игр не затрагиваются.",
+                                                 L"Rust Optimizer", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+                if (answer != IDYES) return;
+            }
+            run_async(remove ? L"Очищаю выбранные папки…" : L"Сканирую выбранные папки…",
+                      [ids, remove]() -> std::wstring {
+                          const auto result = remove ? clean::clean(ids) : clean::scan(ids);
+                          if (!result.ok) return L"Очистка: " + result.error;
+                          if (result.files == 0) return L"Выбранные папки уже пусты";
+                          return str::wfmt(remove ? L"Очищено: %s в %zu файлах"
+                                                  : L"Найдено: %s в %zu файлах",
+                                           str::human_bytes_w(result.bytes).c_str(), result.files);
+                      },
+                      false);
+            return;
+        }
+        if (id == "diag_report") {
+            HardwareInfo hw;
+            AppSettings settings;
+            std::wstring rust_dir;
+            std::wstring fn_dir;
+            {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                hw = state_->hw;
+                settings = state_->settings;
+                rust_dir = state_->games.rust.install_dir;
+                fn_dir = state_->games.fortnite.install_dir;
+            }
+            run_async(L"Собираю диагностический отчёт…", [hw, settings, rust_dir, fn_dir]() -> std::wstring {
+                std::string error;
+                const auto file = diag::write_report(hw, settings, rust_dir, fn_dir, error);
+                if (file.empty()) return L"Отчёт не создан: " + str::widen(error);
+                return L"Отчёт создан: " + file.wstring();
             });
+            return;
+        }
+        if (id == "open_reports") {
+            fsx::ensure_dir(diag::reports_dir());
+            win::shell_open(diag::reports_dir().wstring());
             return;
         }
         if (id == "reset_toggles") {
@@ -1408,6 +1665,7 @@ private:
                 state_->toggles = default_toggles();
                 save_settings_locked();
             }
+            refresh_pages();
             set_status(L"Твики сброшены к значениям по умолчанию");
             ::InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -1462,6 +1720,34 @@ private:
         if (report) set_status(changed ? L"Приоритет игры повышен" : L"Игра не запущена — приоритет применится позже");
     }
 
+    // 60 fps easing: scroll, page slide-in and update progress all settle here.
+    void tick_anim() {
+        bool changed = false;
+        if (!pages_.empty()) {
+            const std::string id = pages_[static_cast<std::size_t>(page_index_)].id;
+            const float current = scroll_for(id);
+            float target = scroll_target_for(id);
+            target = std::clamp(target, 0.0f, (std::max)(0.0f, max_scroll_));
+            if (std::abs(target - current) > 0.5f) {
+                scroll_[id] = current + (target - current) * 0.30f;
+                changed = true;
+            } else if (current != target) {
+                scroll_[id] = target;
+                changed = true;
+            }
+        }
+        if (page_anim_ < 1.0f) {
+            page_anim_ = (std::min)(1.0f, page_anim_ + 0.12f);
+            changed = true;
+        }
+        const float update_target = static_cast<float>(state_->update_progress.load());
+        if (std::abs(update_target - display_progress_) > 0.05f) {
+            display_progress_ += (update_target - display_progress_) * 0.22f;
+            changed = true;
+        }
+        if (changed) ::InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
     void tick() {
         // Priority + optional purge timer, both non-blocking and cheap.
         if (is_on("overview", "auto_priority") && state_->settings.auto_priority) boost_priority(false);
@@ -1490,11 +1776,24 @@ private:
     Themed theme_ = dark();
     std::vector<Page> pages_;
     int page_index_ = 0;
+    bool page_restored_ = false;
     std::map<std::string, float> scroll_;
+    std::map<std::string, float> scroll_target_;
+    float page_anim_ = 1.0f;
+    float display_progress_ = 0.0f;
     std::vector<Hit> hits_;
     int hover_ = -1;
     float scale_ = 1.0f;
     float max_scroll_ = 0.0f;
+    // Scrollbar state (the mouse wheel is not always available, so the content
+    // area gets a draggable thumb plus clickable track).
+    Rect scroll_track_{};
+    Rect scroll_thumb_{};
+    bool scrollbar_active_ = false;
+    bool scroll_drag_ = false;
+    bool scrollbar_hover_ = false;
+    float scroll_drag_offset_ = 0.0f;
+    float scroll_view_h_ = 0.0f;
     bool cursor_hand_ = false;
     bool tracking_leave_ = false;
     int click_x_ = 0;

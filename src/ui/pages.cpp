@@ -3,8 +3,10 @@
 #include <algorithm>
 
 #include "ro/fs.hpp"
+#include "ro/cleaner.hpp"
 #include "ro/memory.hpp"
 #include "ro/str.hpp"
+#include "ro/ui/theme.hpp"
 #include "ro/version.hpp"
 
 namespace ro::ui {
@@ -90,6 +92,11 @@ std::map<std::string, bool> default_toggles() {
         {"rust.pixellight_off", true},
         {"rust.shadows_off", false},
         {"rust.gc_buffer", false},
+        {"rust.dof_off", true},
+        {"rust.motion_blur_off", true},
+        {"rust.parallax_off", false},
+        {"rust.shafts_off", true},
+        {"rust.chromatic_off", true},
         {"fortnite.unlimited_fps", true},
         {"fortnite.vsync_off", true},
         {"fortnite.fullscreen", true},
@@ -112,6 +119,13 @@ std::map<std::string, bool> default_toggles() {
         {"settings.check_updates", true},
         {"settings.minimize_on_apply", false},
         {"settings.autostart_priority", true},
+        {"cleaner.user_temp", true},
+        {"cleaner.windows_temp", true},
+        {"cleaner.shader_d3d", true},
+        {"cleaner.shader_nvidia", true},
+        {"cleaner.shader_amd", true},
+        {"cleaner.crash_dumps", true},
+        {"cleaner.staging", true},
     };
 }
 
@@ -201,6 +215,21 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(toggle_row("shadows_off", L"Полностью отключить тени  ·  shadow.on false",
                                     L"Максимальный прирост, но противники в тени хуже различимы. Включайте осознанно.",
                                     on(t, "rust", "shadows_off", false), true));
+        p.rows.push_back(toggle_row("dof_off", L"Отключить глубину резкости  ·  graphics.depthoffield false",
+                                    L"Убирает постобработку размытия — заметно на слабых GPU.",
+                                    on(t, "rust", "dof_off")));
+        p.rows.push_back(toggle_row("motion_blur_off", L"Отключить смазывание движения",
+                                    L"graphics.motionblur false — чище картинка и меньше нагрузка.",
+                                    on(t, "rust", "motion_blur_off")));
+        p.rows.push_back(toggle_row("parallax_off", L"Отключить параллакс  ·  graphics.parallax false",
+                                    L"Упрощает расчёт параллакс-карт материалов.",
+                                    on(t, "rust", "parallax_off", false)));
+        p.rows.push_back(toggle_row("shafts_off", L"Отключить лучи света  ·  graphics.shafts false",
+                                    L"Убирает объёмные солнечные лучи — экономит fill-rate.",
+                                    on(t, "rust", "shafts_off")));
+        p.rows.push_back(toggle_row("chromatic_off", L"Отключить хроматическую аберрацию",
+                                    L"graphics.chromaticaberration false — косметический эффект, немного GPU.",
+                                    on(t, "rust", "chromatic_off")));
         p.rows.push_back(section("perf", L"ПРОИЗВОДИТЕЛЬНОСТЬ"));
         p.rows.push_back(toggle_row("gc_buffer", L"Увеличить буфер сборщика мусора",
                                     L"gc.buffer 2048 для 16 ГБ RAM, 4096 для 32 ГБ. Реже микрофризы при длинных сессиях.",
@@ -309,6 +338,50 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         pages.push_back(std::move(p));
     }
 
+    // ---------------------------------------------------------------- cleaner
+    {
+        Page p;
+        p.id = "cleaner";
+        p.title = L"Очистка";
+        p.subtitle = L"Временные файлы и кэши шейдеров — без конфигов и сохранений игр";
+        p.apply_label = L"Сканировать выбранное";
+        p.rows.push_back(section("targets", L"ЧТО ОЧИЩАТЬ"));
+        for (const auto& target : clean::targets()) {
+            std::wstring desc = target.desc + L"\n" + target.path.wstring();
+            p.rows.push_back(toggle_row(target.id, target.title, desc,
+                                        on(t, "cleaner", target.id, true)));
+        }
+        p.rows.push_back(section("run", L"ДЕЙСТВИЯ"));
+        p.rows.push_back(button("scan", L"Сканировать выбранное", "cleaner_scan", true));
+        p.rows.push_back(button("clean", L"Очистить выбранное", "cleaner_clean", false, true));
+        p.rows.push_back(note("safe",
+                              L"Удаляются только временные данные и кэши: они пересоздаются автоматически. "
+                              L"Файлы, занятые другой программой, пропускаются."));
+        pages.push_back(std::move(p));
+    }
+
+    // ------------------------------------------------------------ diagnostics
+    {
+        Page p;
+        p.id = "diagnostics";
+        p.title = L"Диагностика";
+        p.subtitle = L"Отчёт о системе, железе и найденных играх для разбора проблем";
+        p.has_apply = false;
+        p.rows.push_back(section("sys", L"СИСТЕМА"));
+        p.rows.push_back(info("cpu", L"Процессор",
+                              ctx.hw->cpu_name + L"  (" + std::to_wstring(ctx.hw->physical_cores) + L" ядер / " +
+                                  std::to_wstring(ctx.hw->logical_cores) + L" потоков)"));
+        p.rows.push_back(info("gpu", L"Видеокарта",
+                              ctx.hw->gpu.name + L"  " + str::human_bytes_w(ctx.hw->gpu.vram_bytes)));
+        p.rows.push_back(info("ram", L"ОЗУ", str::human_bytes_w(ctx.hw->ram_bytes)));
+        p.rows.push_back(info("os", L"ОС", ctx.hw->os_display.empty() ? ctx.hw->os : ctx.hw->os_display));
+        p.rows.push_back(section("report", L"ОТЧЁТ"));
+        p.rows.push_back(button("make", L"Создать отчёт", "diag_report", true));
+        p.rows.push_back(button("open", L"Открыть папку отчётов", "open_reports", false));
+        p.rows.push_back(note("hint", L"Отчёт сохраняется в %LOCALAPPDATA%\\RustOptimizer\\reports."));
+        pages.push_back(std::move(p));
+    }
+
     // ---------------------------------------------------------------- profiles
     {
         Page p;
@@ -338,8 +411,13 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.subtitle = L"Внешний вид, обновления и служебные папки";
         p.apply_label = L"Сохранить настройки";
         p.rows.push_back(section("ui", L"ИНТЕРФЕЙС"));
-        p.rows.push_back(toggle_row("dark_theme", L"Тёмная тема", L"Светлая тема доступна без перезапуска.",
-                                    ctx.settings->dark_theme));
+        p.rows.push_back(section("theme", L"ТЕМА ОФОРМЛЕНИЯ"));
+        for (const auto& id : theme_ids()) {
+            const bool active = id == ctx.theme_id;
+            std::wstring label = theme_title(id);
+            if (active) label += L"  (выбрана)";
+            p.rows.push_back(button("theme_" + id, label, "theme:" + id, active));
+        }
         p.rows.push_back(toggle_row("minimize_on_apply", L"Сворачивать после применения",
                                     L"Удобно, если оптимизатор запускается из лаунчера.", ctx.settings->minimize_on_apply));
         p.rows.push_back(toggle_row("autostart_priority", L"Автоприоритет при старте",
@@ -352,8 +430,7 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(info("latest", L"Последняя версия",
                               ctx.update_available ? str::widen(ctx.latest_version) + L" — доступно обновление"
                                                    : L"Проверка не выполнялась или версия актуальна"));
-        p.rows.push_back(button("check", L"Проверить обновления", "update_check", false));
-        p.rows.push_back(button("install", L"Установить обновление", "update_install", true, ctx.update_available));
+        p.rows.push_back(button("check", L"Проверить обновления сейчас (F5)", "update_check", true));
         p.rows.push_back(section("files", L"СЛУЖЕБНЫЕ ПАПКИ"));
         p.rows.push_back(info("data", L"Данные", fsx::data_dir().wstring()));
         p.rows.push_back(info("logs", L"Логи", fsx::log_dir().wstring()));

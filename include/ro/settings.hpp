@@ -22,6 +22,8 @@ struct GameInstall {
 struct AppSettings {
     int schema = 1;
     bool dark_theme = true;
+    // Named theme preset (dark, midnight, light, neon, rust, ocean).
+    std::string theme = "dark";
     bool check_updates = true;
     bool auto_priority = true;
     bool auto_purge = false;

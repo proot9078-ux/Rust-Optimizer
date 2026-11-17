@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required(VERSION 3.21)
 
 project(RustOptimizer
-        VERSION 8.0.0
+        VERSION 8.1.0
         DESCRIPTION "Rust Optimizer - external performance engine for RUST and FORTNITE"
         LANGUAGES C CXX RC)
 
@@ -76,6 +76,8 @@ set(RO_CORE_SOURCES
     src/core/sha256.cpp
     src/core/settings.cpp
     src/core/hardware.cpp
+    src/core/cleaner.cpp
+    src/core/diagnostics.cpp
     src/games/steam.cpp
     src/games/epic.cpp
     src/games/game_finder.cpp

@@ -38,6 +38,7 @@ AppSettings SettingsStore::load() {
     try {
         s.schema = static_cast<int>(json::get_int(j, "schema", 1));
         s.dark_theme = json::get_bool(j, "dark_theme", true);
+        s.theme = json::get_string(j, "theme", s.dark_theme ? "dark" : "light");
         s.check_updates = json::get_bool(j, "check_updates", true);
         s.auto_priority = json::get_bool(j, "auto_priority", true);
         s.auto_purge = json::get_bool(j, "auto_purge", false);
@@ -60,6 +61,7 @@ bool SettingsStore::save(const AppSettings& s) {
     json::Value j = json::Value::object();
     j["schema"] = s.schema;
     j["dark_theme"] = s.dark_theme;
+    j["theme"] = s.theme;
     j["check_updates"] = s.check_updates;
     j["auto_priority"] = s.auto_priority;
     j["auto_purge"] = s.auto_purge;

@@ -3,6 +3,8 @@
 #include <dwrite.h>
 
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace ro::ui {
 
@@ -33,5 +35,12 @@ inline D2D1_COLOR_F rgb(unsigned rgb_value, float alpha = 1.0f) {
 Themed dark();
 Themed light();
 Themed for_mode(bool dark_mode);
+
+// Named presets selectable from Settings: dark, midnight, light, neon, rust, ocean.
+Themed preset(std::string_view id);
+const std::vector<std::string>& theme_ids();
+const wchar_t* theme_title(std::string_view id);
+// Returns the closest known id ("dark" for unknown input).
+std::string normalise_theme(std::string_view id);
 
 }  // namespace ro::ui

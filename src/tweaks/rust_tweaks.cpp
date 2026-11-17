@@ -171,6 +171,11 @@ json::Value to_json(const Options& o) {
     j["shadows_off"] = o.shadows_off;
     j["half_res_sss"] = o.half_res_sss;
     j["pixellight_off"] = o.pixellight_off;
+    j["depth_of_field_off"] = o.depth_of_field_off;
+    j["motion_blur_off"] = o.motion_blur_off;
+    j["parallax_off"] = o.parallax_off;
+    j["shafts_off"] = o.shafts_off;
+    j["chromatic_off"] = o.chromatic_off;
     j["gc_buffer"] = o.gc_buffer;
     j["gc_buffer_mb"] = o.gc_buffer_mb;
     j["net_backup"] = o.net_backup;
@@ -191,6 +196,11 @@ Options from_json(const json::Value& v) {
     o.shadows_off = json::get_bool(v, "shadows_off", o.shadows_off);
     o.half_res_sss = json::get_bool(v, "half_res_sss", o.half_res_sss);
     o.pixellight_off = json::get_bool(v, "pixellight_off", o.pixellight_off);
+    o.depth_of_field_off = json::get_bool(v, "depth_of_field_off", o.depth_of_field_off);
+    o.motion_blur_off = json::get_bool(v, "motion_blur_off", o.motion_blur_off);
+    o.parallax_off = json::get_bool(v, "parallax_off", o.parallax_off);
+    o.shafts_off = json::get_bool(v, "shafts_off", o.shafts_off);
+    o.chromatic_off = json::get_bool(v, "chromatic_off", o.chromatic_off);
     o.gc_buffer = json::get_bool(v, "gc_buffer", o.gc_buffer);
     o.gc_buffer_mb = static_cast<int>(json::get_int(v, "gc_buffer_mb", o.gc_buffer_mb));
     o.net_backup = json::get_bool(v, "net_backup", o.net_backup);
@@ -236,6 +246,11 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"shadow.on", "false"},
         {"sss.halfres", "True"},
         {"graphicssettings.pixellightcount", "0"},
+        {"graphics.depthoffield", "false"},
+        {"graphics.motionblur", "false"},
+        {"graphics.parallax", "false"},
+        {"graphics.shafts", "false"},
+        {"graphics.chromaticaberration", "false"},
         {"gc.buffer", std::to_string(opt.gc_buffer_mb)},
     };
     const std::map<std::string, bool> enabled = {
@@ -248,6 +263,11 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"shadow.on", opt.shadows_off},
         {"sss.halfres", opt.half_res_sss},
         {"graphicssettings.pixellightcount", opt.pixellight_off},
+        {"graphics.depthoffield", opt.depth_of_field_off},
+        {"graphics.motionblur", opt.motion_blur_off},
+        {"graphics.parallax", opt.parallax_off},
+        {"graphics.shafts", opt.shafts_off},
+        {"graphics.chromaticaberration", opt.chromatic_off},
         {"gc.buffer", opt.gc_buffer},
     };
 

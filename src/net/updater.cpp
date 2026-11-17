@@ -285,6 +285,15 @@ int run_applier(const std::filesystem::path& staged_exe, const std::filesystem::
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
     if (!replaced) {
+        // Never leave the installation broken: if the swap failed after the old
+        // binary was moved aside, put it back.
+        const auto backup = target_exe.wstring() + L".old";
+        if (!fsx::is_regular_file(target_exe) && fsx::is_regular_file(backup)) {
+            if (::MoveFileExW(backup.c_str(), target_exe.wstring().c_str(),
+                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) {
+                log::warn("update: restored the previous binary after a failed swap");
+            }
+        }
         log::error("update: cannot replace " + str::narrow(target_exe.wstring()));
         return 11;
     }

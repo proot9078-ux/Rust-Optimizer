@@ -44,6 +44,7 @@ struct PageContext {
     bool admin = false;
     bool update_available = false;
     std::string latest_version;
+    std::string theme_id = "dark";
     std::wstring steam_dir;
 };
 

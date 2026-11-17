@@ -25,12 +25,18 @@ PowerShell runtime, no external dependencies.
 | Page | What it does |
 |---|---|
 | **Обзор** | Hardware summary, detected game paths, one-click recommended profile, game launch, standby purge |
-| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, GC buffer), launch options, `.rop` profile import/export |
+| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, GC buffer), launch options, `.rop` profile import/export |
 | **FORTNITE** | `GameUserSettings.ini` + `Engine.ini` tweaks (frame limit, VSync, fullscreen, motion blur, bloom, lens flare, DOF, shadows, streaming pool), launch options |
 | **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity |
+| **Очистка** | Scan and clean user/Windows temp folders, DirectX/NVIDIA/AMD shader caches, crash dumps and updater staging (configs and saves untouched) |
 | **Профили** | Save/load/import/export tweak profiles (`.rop`) |
-| **Настройки** | Theme, mandatory updates, auto-priority, auto-purge, data folders |
+| **Диагностика** | One-click system/hardware/games/log report saved to `%LOCALAPPDATA%\RustOptimizer\reports` |
+| **Настройки** | Six themes (dark, midnight, light, neon, RUST, ocean), mandatory updates, auto-priority, minimize-on-apply, data folders |
 | **Логи** | Live session log with levels, plus the on-disk log file |
+
+Scrolling works without a mouse wheel: drag the scrollbar, click the track, or
+use the arrow keys, PageUp/PageDown and Home/End. Ctrl+1…9 switches pages, F5
+checks for updates.
 
 Every change is reversible:
 

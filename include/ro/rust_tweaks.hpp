@@ -25,6 +25,11 @@ struct Options {
     bool shadows_off = false;
     bool half_res_sss = true;
     bool pixellight_off = true;
+    bool depth_of_field_off = true;
+    bool motion_blur_off = true;
+    bool parallax_off = false;
+    bool shafts_off = true;
+    bool chromatic_off = true;
     bool gc_buffer = false;
     int gc_buffer_mb = 2048;
     bool net_backup = false;
