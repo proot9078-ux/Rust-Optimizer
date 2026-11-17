@@ -18,7 +18,7 @@ namespace fs = std::filesystem;
 std::wstring env_path(const wchar_t* name) {
     wchar_t buffer[MAX_PATH * 2]{};
     const DWORD n = ::GetEnvironmentVariableW(name, buffer, static_cast<DWORD>(std::size(buffer)));
-    if (n == 0 || n >= std::size(buffer)) return {};
+    if (n == 0 || n >= static_cast<DWORD>(std::size(buffer))) return {};
     return std::wstring(buffer, n);
 }
 
