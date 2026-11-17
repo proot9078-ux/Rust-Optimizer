@@ -62,9 +62,9 @@ struct NavItem {
 };
 
 const NavItem kNav[] = {
-    {"overview", L"Обзор"},   {"rust", L"RUST"},          {"fortnite", L"FORTNITE"},
-    {"system", L"Система"},   {"cleaner", L"Очистка"},    {"profiles", L"Профили"},
-    {"diagnostics", L"Диагностика"}, {"settings", L"Настройки"}, {"logs", L"Логи"},
+    {"overview", L"Обзор"},   {"rust", L"RUST"},         {"fortnite", L"FORTNITE"},
+    {"system", L"Система"},   {"cleaner", L"Очистка"},   {"diagnostics", L"Диагностика"},
+    {"profiles", L"Профили"}, {"settings", L"Настройки"}, {"logs", L"Логи"},
 };
 
 struct Shared {
@@ -87,6 +87,7 @@ struct Shared {
     // swaps the binary and restarts itself; the UI locks into a progress card.
     std::atomic<bool> update_mandatory{false};
     std::atomic<bool> update_installing{false};
+    std::atomic<bool> update_checking{false};
     std::atomic<int> update_progress{0};
     std::wstring update_version;
     std::wstring update_status = L"Проверка обновлений…";
@@ -187,9 +188,15 @@ public:
     // exits immediately when a mandatory install is already running.
     void start_update_check() {
         if (state_->update_mandatory.load()) return;
+        // One check at a time: F5 pressed repeatedly must not spawn an army of
+        // workers hitting the GitHub API.
+        if (state_->update_checking.exchange(true)) return;
         set_status(L"Проверяю обновления на GitHub…");
         auto shared = state_;
-        std::thread([shared]() { update_worker(shared); }).detach();
+        std::thread([shared]() {
+            update_worker(shared);
+            shared->update_checking = false;
+        }).detach();
     }
 
     // Mandatory update: check, download, verify, swap and relaunch. There is no
@@ -206,6 +213,13 @@ public:
             }
             if (!result.update_available) {
                 log::info("update: up to date (" + std::string(kVersion) + ")");
+                {
+                    std::lock_guard<std::mutex> lock(shared->mutex);
+                    shared->update_available = false;
+                    shared->latest_version = result.latest_version;
+                    shared->status = L"Установлена последняя версия (" + str::widen(kVersion) + L")";
+                }
+                post_refresh(shared);
                 return;
             }
 
@@ -799,8 +813,9 @@ private:
         p.text(L"performance engine", Rect{72, 44, 150, 16}, theme.text_muted, 10.5f, 400, 0);
 
         float y = 92;
+        const std::string active_id = pages_.empty() ? std::string() : pages_[static_cast<std::size_t>(page_index_)].id;
         for (int i = 0; i < static_cast<int>(std::size(kNav)); ++i) {
-            const bool active = i == page_index_;
+            const bool active = kNav[i].id == active_id;
             const Rect item{14, y, kSidebarWidth - 28, 42};
             if (active) {
                 p.fill_round(item, 12.0f, theme.accent_soft);
@@ -1060,7 +1075,14 @@ private:
         for (int i = 0; i < static_cast<int>(std::size(kNav)); ++i) {
             const Rect item{14, 92.0f + i * 46.0f, kSidebarWidth - 28, 42};
             if (item.contains(x, y)) {
-                page_index_ = i;
+                // Resolve by page id: the sidebar order and the page order are
+                // separate lists and used to drift apart.
+                for (std::size_t p = 0; p < pages_.size(); ++p) {
+                    if (pages_[p].id == kNav[i].id) {
+                        page_index_ = static_cast<int>(p);
+                        break;
+                    }
+                }
                 page_anim_ = 0.0f;
                 ::InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
@@ -1074,12 +1096,19 @@ private:
     }
 
     // ---------------------------------------------------------------- actions
-    void dispatch(const std::string& action) {
-        if (action == "action:__apply__") {
+    void dispatch(const std::string& raw_action) {
+        // Button rows arrive as "action:<name>"; nav/toggle rows do not. Strip
+        // the prefix once so "action:theme:ocean" and "theme:ocean" behave the
+        // same - that mismatch used to make the theme buttons dead.
+        std::string action = raw_action;
+        const bool is_button = str::starts_with(action, "action:");
+        if (is_button) action = action.substr(7);
+
+        if (action == "__apply__") {
             apply_page();
             return;
         }
-        if (str::starts_with(action, "nav:")) {
+        if (!is_button && str::starts_with(action, "nav:")) {
             const std::string id = action.substr(4);
             for (std::size_t i = 0; i < pages_.size(); ++i) {
                 if (pages_[i].id == id) {
@@ -1133,9 +1162,7 @@ private:
             ::InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
-        if (str::starts_with(action, "action:")) {
-            execute(action.substr(7));
-        }
+        if (is_button) execute(action);
     }
 
     void apply_page() {
