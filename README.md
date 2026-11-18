@@ -24,10 +24,10 @@ PowerShell runtime, no external dependencies.
 
 | Page | What it does |
 |---|---|
-| **Обзор** | Hardware summary, detected game paths, one-click recommended profile, game launch, standby purge |
-| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, GC buffer), launch options, `.rop` profile import/export |
+| **Обзор** | Hardware summary, detected game paths, autopilot (repair, clean, apply everything, vivid picture, launch RUST, close itself), game launch, standby purge |
+| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, GC buffer), Steam Launch Options writer (`localconfig.vdf`) with revert, picture presets + NVIDIA panel shortcut, `.rop` profile import/export |
 | **FORTNITE** | `GameUserSettings.ini` + `Engine.ini` tweaks (frame limit, VSync, fullscreen, motion blur, bloom, lens flare, DOF, shadows, streaming pool), launch options |
-| **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity |
+| **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity, SFC + DISM repair |
 | **Очистка** | Scan and clean user/Windows temp folders, DirectX/NVIDIA/AMD shader caches, crash dumps and updater staging (configs and saves untouched) |
 | **Профили** | Save/load/import/export tweak profiles (`.rop`) |
 | **Диагностика** | One-click system/hardware/games/log report saved to `%LOCALAPPDATA%\RustOptimizer\reports` |
@@ -43,6 +43,13 @@ Every change is reversible:
 * files are backed up to `%LOCALAPPDATA%\RustOptimizer\backups\<stamp>_<label>`
   before the first write;
 * RUST keys are merged into the existing `client.cfg` and can be reverted;
+* Steam Launch Options are written into `localconfig.vdf` only while Steam and
+  RUST are closed, atomically, after a backup and with a read-back check that
+  restores the original on mismatch;
+* picture presets change the desktop gamma ramp through `SetDeviceGammaRamp`
+  and the original ramp is saved first, so "Как в Windows" restores it exactly;
+* the optimizer closes itself (after saving settings) when `RustClient.exe`
+  starts — that is a UI action only, not a hook into the game.
 * FORTNITE entries live inside `; >>> RO:<id> >>>` … `; <<< RO:<id> <<<`
   marker blocks that are removed on revert without touching anything else;
 * registry changes only target per-user keys (`HKCU`) unless elevation is

@@ -1,7 +1,7 @@
 #pragma once
 // Central application identity. Version comes from CMake (RO_VERSION).
 #ifndef RO_VERSION
-#define RO_VERSION "8.1.1"
+#define RO_VERSION "8.2.0"
 #endif
 #ifndef RO_GITHUB_OWNER
 #define RO_GITHUB_OWNER "proot9078-ux"

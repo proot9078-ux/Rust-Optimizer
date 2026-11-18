@@ -44,6 +44,8 @@ AppSettings SettingsStore::load() {
         s.auto_purge = json::get_bool(j, "auto_purge", false);
         s.auto_purge_interval_min = static_cast<int>(json::get_int(j, "auto_purge_interval_min", 15));
         s.minimize_on_apply = json::get_bool(j, "minimize_on_apply", false);
+        s.close_on_launch = json::get_bool(j, "close_on_launch", true);
+        s.image_preset = json::get_string(j, "image_preset", "off");
         s.allow_affinity = json::get_bool(j, "allow_affinity", false);
         s.steam_dir = get_w(j, "steam_dir", {});
         s.rust_exe = get_w(j, "rust_exe", {});
@@ -67,6 +69,8 @@ bool SettingsStore::save(const AppSettings& s) {
     j["auto_purge"] = s.auto_purge;
     j["auto_purge_interval_min"] = s.auto_purge_interval_min;
     j["minimize_on_apply"] = s.minimize_on_apply;
+    j["close_on_launch"] = s.close_on_launch;
+    j["image_preset"] = s.image_preset;
     j["allow_affinity"] = s.allow_affinity;
     j["steam_dir"] = str::narrow(s.steam_dir);
     j["rust_exe"] = str::narrow(s.rust_exe);

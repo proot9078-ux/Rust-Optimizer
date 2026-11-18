@@ -33,6 +33,7 @@
 #include "ro/profiles.hpp"
 #include "ro/settings.hpp"
 #include "ro/shortcut.hpp"
+#include "ro/steam_launch.hpp"
 #include "ro/str.hpp"
 #include "ro/system_tweaks.hpp"
 #include "ro/ui/pages.hpp"
@@ -40,7 +41,9 @@
 #include "ro/ui/widgets.hpp"
 #include "ro/updater.hpp"
 #include "ro/version.hpp"
+#include "ro/visuals.hpp"
 #include "ro/win32.hpp"
+#include "ro/win_repair.hpp"
 
 namespace ro::ui {
 
@@ -79,6 +82,12 @@ struct Shared {
     std::atomic<bool> busy{false};
     std::atomic<int> progress{0};
     std::atomic<bool> closing{false};
+    // Set by the autopilot: close the window as soon as a game starts, even if
+    // the user switched "close_on_launch" off.
+    std::atomic<bool> close_after_launch{false};
+    // A worker changed settings and the UI thread must persist them (it owns
+    // the toggle map, so saving from the worker would drop recent switches).
+    std::atomic<bool> settings_dirty{false};
     HWND hwnd = nullptr;
     bool update_available = false;
     std::string latest_version;
@@ -534,16 +543,14 @@ private:
         std::lock_guard<std::mutex> lock(state_->mutex);
         const std::string key = page + "." + row;
         auto it = state_->toggles.find(key);
-        if (it == state_->toggles.end()) {
-            // First click on a row that has no saved value: trust the state the
-            // user sees and store the opposite.
-            state_->toggles[key] = !current;
-            save_settings_locked();
-            return !current;
-        }
-        it->second = !it->second;
+        // First click on a row without a saved value: trust what the user sees
+        // and store the opposite.
+        const bool value = it == state_->toggles.end() ? !current : !it->second;
+        state_->toggles[key] = value;
+        // Some switches mirror a settings field that the timer reads live.
+        if (key == "settings.close_on_launch") state_->settings.close_on_launch = value;
         save_settings_locked();
-        return it->second;
+        return value;
     }
 
     bool is_on(const std::string& page, const std::string& row) const {
@@ -570,6 +577,7 @@ private:
             ctx.latest_version = state_->latest_version;
             ctx.steam_dir = state_->games.steam.steam_dir;
             ctx.theme_id = state_->settings.theme;
+            ctx.image_preset = state_->settings.image_preset;
             last_page = state_->settings.last_page;
             ctx.admin = is_admin_;
             pages_ = build_pages(ctx);
@@ -1140,6 +1148,25 @@ private:
             ::InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
+        if (str::starts_with(action, "visual:")) {
+            const std::string id = action.substr(7);
+            std::string error;
+            const bool ok = visuals::apply(id, error);
+            if (ok) {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                state_->settings.image_preset = id;
+                save_settings_locked();
+            }
+            refresh_pages();
+            std::wstring label = str::widen(id);
+            for (const auto& preset : visuals::presets()) {
+                if (preset.id == id) label = preset.title;
+            }
+            set_status(ok ? L"Картинка: " + label + L" применено" : L"Картинка не изменена: " + str::widen(error));
+            log::info("ui: visual preset = " + id + (ok ? " (ok)" : " (failed)"));
+            ::InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (str::starts_with(action, "toggle:")) {
             const auto parts = str::split(action.substr(7), ':');
             if (parts.size() < 2) return;
@@ -1339,10 +1366,12 @@ private:
         // Read the switch states before taking the lock: is_on() locks as well and
         // std::mutex is not recursive.
         const bool minimize = is_on("settings", "minimize_on_apply");
+        const bool close_on_launch = is_on("settings", "close_on_launch");
         const bool priority = is_on("settings", "autostart_priority");
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             state_->settings.minimize_on_apply = minimize;
+            state_->settings.close_on_launch = close_on_launch;
             // Updates are mandatory: the switch was removed from the UI, but an
             // older settings.json may still carry "false".
             state_->settings.check_updates = true;
@@ -1701,6 +1730,187 @@ private:
             boost_priority(true);
             return;
         }
+        if (id == "apply_launch_options" || id == "revert_launch_options") {
+            const auto steam_dir = state_->games.steam.steam_dir;
+            const unsigned ram_mb = static_cast<unsigned>(state_->hw.ram_bytes / (1024ull * 1024ull));
+            const std::string vendor = state_->hw.gpu.vendor;
+            const bool gc_4gb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull;
+            const bool revert = id == "revert_launch_options";
+            run_async(revert ? L"Возвращаю параметры запуска Steam…" : L"Записываю параметры запуска в Steam…",
+                      [steam_dir, ram_mb, vendor, gc_4gb, revert]() -> std::wstring {
+                          const auto r = revert ? steam_launch::revert(steam_dir)
+                                                : steam_launch::apply(steam_dir, ram_mb, vendor, gc_4gb);
+                          if (!r.ok) return L"Параметры запуска не изменены: " + str::widen(r.error);
+                          if (!revert && !r.changed) return L"Параметры запуска уже актуальны";
+                          return std::wstring(revert ? L"Параметры запуска восстановлены из бэкапа"
+                                                     : L"Параметры запуска записаны") +
+                                  L". Бэкап: " + r.backup_dir.wstring();
+                      });
+            return;
+        }
+        if (id == "open_nvidia_panel") {
+            std::string error;
+            if (visuals::open_nvidia_panel(error)) set_status(L"Панель NVIDIA открыта");
+            else set_status(L"Панель NVIDIA: " + str::widen(error));
+            return;
+        }
+        if (id == "repair_windows") {
+            if (!win_repair::is_admin()) {
+                set_status(L"Для SFC и DISM нужны права администратора");
+                return;
+            }
+            const int answer = ::MessageBoxW(
+                hwnd_,
+                L"Запустить проверку и исправление системных файлов Windows?\n\n"
+                L"sfc /scannow и DISM /RestoreHealth могут занять 10-30 минут.\n"
+                L"Журнал будет сохранён в папку логов.",
+                L"Rust Optimizer", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+            if (answer != IDYES) return;
+            run_async(L"Проверяю и исправляю системные файлы Windows…", []() -> std::wstring {
+                const auto result = win_repair::run_all();
+                return result.summary;
+            });
+            return;
+        }
+        if (id == "auto_pilot") {
+            const auto exe = state_->games.rust.exe_path;
+            if (exe.empty()) {
+                set_status(L"RUST не найден — сначала выполните поиск игр");
+                return;
+            }
+            const auto rust_opt = rust_options();
+            const auto fn_opt = fortnite_options();
+            const auto fn_exe = state_->games.fortnite.exe_path;
+            const auto steam_dir = state_->games.steam.steam_dir;
+            const unsigned ram_mb = static_cast<unsigned>(state_->hw.ram_bytes / (1024ull * 1024ull));
+            const std::string vendor = state_->hw.gpu.vendor;
+            const bool gc_4gb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull;
+            const bool purge = is_on("system", "purge_on_apply");
+            const bool dvr_off = is_on("system", "dvr_off");
+            const bool game_mode = is_on("system", "game_mode_on");
+            const bool fse_off = is_on("system", "fse_off");
+            const bool hags = is_on("system", "hags_on");
+            const bool dns = is_on("system", "dns_flush");
+            const bool want_clean = is_on("overview", "autopilot_clean");
+            const bool want_visuals = is_on("overview", "autopilot_visuals");
+            const bool want_repair = is_on("overview", "repair_windows") && win_repair::is_admin();
+            std::vector<std::string> clean_ids;
+            std::string preset_id;
+            {
+                std::lock_guard<std::mutex> lock(state_->mutex);
+                for (const auto& target : clean::targets()) {
+                    const auto it = state_->toggles.find("cleaner." + target.id);
+                    if (it == state_->toggles.end() || it->second) clean_ids.push_back(target.id);
+                }
+                preset_id = state_->settings.image_preset;
+            }
+
+            run_async(L"Автопилот: чиню, чищу и запускаю RUST…",
+                      [=, shared = state_]() -> std::wstring {
+                          int ok = 0;
+                          std::wstring problems;
+                          const auto add_problem = [&problems](const std::wstring& text) {
+                              if (!problems.empty()) problems += L" ";
+                              problems += text;
+                          };
+
+                          // 1. Windows integrity, only when the user asked for it.
+                          if (want_repair) {
+                              const auto repair = win_repair::run_all();
+                              if (repair.sfc.ok && repair.dism.ok) ++ok;
+                              else add_problem(repair.summary);
+                          }
+
+                          // 2. Temporary files and shader caches.
+                          if (want_clean && !clean_ids.empty()) {
+                              const auto clean_result = clean::clean(clean_ids);
+                              if (clean_result.ok) {
+                                  ++ok;
+                                  log::success("autopilot: cleaned " + str::human_bytes(clean_result.bytes) + " in " +
+                                               std::to_string(clean_result.files) + " files");
+                              }
+                          }
+
+                          const auto rust_report = rust::apply(rust::resolve_paths(exe), rust_opt);
+                          for (const auto& note : rust_report.notes) log::info("rust: " + note);
+                          if (rust_report.ok) ++ok;
+                          else add_problem(L"client.cfg не обновлён.");
+
+                          if (!fn_exe.empty()) {
+                              const auto fn_report = fortnite::apply(fortnite::resolve_user_paths(), fn_opt);
+                              for (const auto& note : fn_report.notes) log::info("fortnite: " + note);
+                              if (fn_report.ok) ++ok;
+                              else add_problem(L"Конфиги Fortnite не обновлены.");
+                          }
+
+                          std::string error;
+                          if (dvr_off && system_tweaks::set_game_dvr(false, error)) ++ok;
+                          if (game_mode && system_tweaks::set_game_mode(true, error)) ++ok;
+                          if (hags && system_tweaks::set_hags(true, error)) ++ok;
+                          if (dns && system_tweaks::flush_dns(error)) ++ok;
+                          if (fse_off && system_tweaks::set_fullscreen_optimizations(exe, false, error)) ++ok;
+                          if (fse_off && !fn_exe.empty() &&
+                              system_tweaks::set_fullscreen_optimizations(fn_exe, false, error)) {
+                              ++ok;
+                          }
+                          if (purge) {
+                              const auto r = mem::purge_standby_list();
+                              if (r.ok) {
+                                  ++ok;
+                                  log::success("autopilot: standby purge, freed " + str::human_bytes(r.freed_bytes));
+                              }
+                          }
+
+                          // Launch Options need Steam closed; this also reports back
+                          // when the user has to close it first.
+                          const auto opts = steam_launch::apply(steam_dir, ram_mb, vendor, gc_4gb);
+                          std::wstring opts_text;
+                          if (opts.ok && opts.changed) {
+                              ++ok;
+                              opts_text = L"Параметры запуска Steam обновлены.";
+                          } else if (opts.ok) {
+                              opts_text = L"Параметры запуска уже актуальны.";
+                          } else {
+                              opts_text = L"Параметры запуска пропущены: " + str::widen(opts.error) + L".";
+                          }
+
+                          // Vivid picture: gamma ramp applied before the game
+                          // starts, so the first frame is already "juicy".
+                          std::wstring visual_text;
+                          if (want_visuals) {
+                              const std::string applied_id = preset_id == "off" ? "vivid" : preset_id;
+                              std::string visual_error;
+                              const bool visual_ok = visuals::apply(applied_id, visual_error);
+                              if (visual_ok) {
+                                  ++ok;
+                                  {
+                                      // Remember the fallback preset so it is
+                                      // re-applied on the next start.
+                                      std::lock_guard<std::mutex> lock(shared->mutex);
+                                      shared->settings.image_preset = applied_id;
+                                  }
+                                  shared->settings_dirty = true;
+                                  visual_text = L"Картинка включена.";
+                              } else {
+                                  visual_text = L"Картинка не изменена: " + str::widen(visual_error) + L".";
+                              }
+                          }
+
+                          win::shell_open(L"steam://rungameid/252490");
+                          log::success("autopilot: launching RUST through Steam");
+                          // tick() closes the window as soon as RustClient.exe
+                          // appears, even if "close_on_launch" is switched off.
+                          shared->close_after_launch = true;
+
+                          std::wstring status = L"Автопилот: " + std::to_wstring(ok) + L" шагов применено. ";
+                          status += opts_text + L" " + visual_text + L" RUST запускается. ";
+                          status += L"Окно закроется само при появлении игры.";
+                          if (!problems.empty()) status += L" " + problems;
+                          return status;
+                      },
+                      true);
+            return;
+        }
     }
 
     std::filesystem::path pick_open(const wchar_t* filter) {
@@ -1775,8 +1985,46 @@ private:
         if (changed) ::InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    // Windows were told to close by WM_CLOSE once the game is up. The autopilot
+    // arms this too, so "optimize → launch → close" is a single click.
+    void maybe_close_on_launch() {
+        const bool rust_running = proc::is_running(L"RustClient.exe");
+        const bool fortnite_running =
+            !rust_running && proc::is_running(L"FortniteClient-Win64-Shipping.exe");
+        const bool running = rust_running || fortnite_running;
+        if (!game_seen_ready_) {
+            // A game that was already running at startup is not a "launch".
+            game_seen_ = running;
+            game_seen_ready_ = true;
+        }
+        const bool newly_running = running && !game_seen_;
+        game_seen_ = running;
+        if (!running) return;
+
+        // The autopilot always wants to close; otherwise it is the user's
+        // "Закрываться при запуске игры" switch and only a fresh launch counts.
+        const bool armed = state_->close_after_launch.load();
+        if (!armed && !newly_running) return;
+        if (!armed) {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (!state_->settings.close_on_launch) return;
+        }
+        // Never interrupt an update in flight.
+        if (state_->update_installing.load() || state_->update_mandatory.load()) return;
+        if (state_->busy.load()) {
+            // A worker is still writing configs; try again on the next tick.
+            return;
+        }
+        state_->close_after_launch = false;
+        log::info(std::string("ui: ") + (rust_running ? "RustClient.exe" : "FortniteClient-Win64-Shipping.exe") +
+                  " detected, closing optimizer");
+        ::PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+    }
+
     void tick() {
         // Priority + optional purge timer, both non-blocking and cheap.
+        maybe_close_on_launch();
+        if (state_->settings_dirty.exchange(false)) save_settings();
         if (is_on("overview", "auto_priority") && state_->settings.auto_priority) boost_priority(false);
         if (is_on("overview", "auto_purge")) {
             const auto now = std::chrono::steady_clock::now();
@@ -1807,6 +2055,8 @@ private:
     std::map<std::string, float> scroll_;
     std::map<std::string, float> scroll_target_;
     float page_anim_ = 1.0f;
+    bool game_seen_ = false;
+    bool game_seen_ready_ = false;
     float display_progress_ = 0.0f;
     std::vector<Hit> hits_;
     int hover_ = -1;
@@ -1856,6 +2106,14 @@ int run(const StartOptions& options) {
     if (!icon::init()) log::warn("icon: GDI+ init failed");
 
     auto state = make_state();
+    // A chosen picture preset survives restarts: the saved original ramps make
+    // it safe to re-apply, and "off" still restores the untouched desktop.
+    if (state->settings.image_preset != "off") {
+        std::string visual_error;
+        if (!visuals::apply(state->settings.image_preset, visual_error)) {
+            log::warn("visuals: startup preset skipped: " + visual_error);
+        }
+    }
     state->hw = gather();
     state->cpu = cpu::detect();
     log::info("hw: " + str::narrow(state->hw.cpu_name) + " / " + state->hw.gpu.vendor);

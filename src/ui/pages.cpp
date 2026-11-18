@@ -8,6 +8,7 @@
 #include "ro/str.hpp"
 #include "ro/ui/theme.hpp"
 #include "ro/version.hpp"
+#include "ro/visuals.hpp"
 
 namespace ro::ui {
 
@@ -82,6 +83,9 @@ std::map<std::string, bool> default_toggles() {
     return {
         {"overview.auto_priority", true},
         {"overview.auto_purge", false},
+        {"overview.autopilot_clean", true},
+        {"overview.autopilot_visuals", true},
+        {"overview.repair_windows", false},
         {"rust.grass_off", true},
         {"rust.grass_displacement", false},
         {"rust.grass_shadowcast", false},
@@ -118,6 +122,7 @@ std::map<std::string, bool> default_toggles() {
         {"settings.dark_theme", true},
         {"settings.check_updates", true},
         {"settings.minimize_on_apply", false},
+        {"settings.close_on_launch", true},
         {"settings.autostart_priority", true},
         {"cleaner.user_temp", true},
         {"cleaner.windows_temp", true},
@@ -165,6 +170,22 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(info("os", L"Система", ctx.hw ? ctx.hw->os_display : L"—"));
 
         p.rows.push_back(section("quick", L"БЫСТРЫЕ ДЕЙСТВИЯ"));
+        p.rows.push_back(button("autopilot", L"ОПТИМИЗИРОВАТЬ ВСЁ, ЗАПУСТИТЬ RUST И ЗАКРЫТЬСЯ", "auto_pilot", true,
+                                ctx.rust && ctx.rust->valid));
+        p.rows.push_back(note("autopilot_hint",
+                              L"Автопилот чинит систему, чистит кэш, применяет client.cfg и системные твики, "
+                              L"записывает параметры запуска Steam, включает сочную картинку, запускает игру и "
+                              L"закрывает оптимизатор, как только появится RustClient.exe."));
+        p.rows.push_back(toggle_row("autopilot_clean", L"Автопилот чистит временные файлы",
+                                    L"Temp, кэши шейдеров, дампы. Конфиги и сохранения не затрагиваются.",
+                                    on(t, "overview", "autopilot_clean")));
+        p.rows.push_back(toggle_row("autopilot_visuals", L"Автопилот включает сочную картинку",
+                                    L"Выбранный пресет экрана (см. «RUST → КАРТИНКА») применяется перед запуском.",
+                                    on(t, "overview", "autopilot_visuals")));
+        p.rows.push_back(toggle_row("repair_windows", L"Автопилот чинит ошибки Windows (SFC + DISM)",
+                                    L"Официальные sfc /scannow и DISM /RestoreHealth. Нужны права администратора, "
+                                    L"занимает 10-30 минут.",
+                                    on(t, "overview", "repair_windows", false)));
         p.rows.push_back(toggle_row("auto_priority", L"Держать высокий приоритет игры",
                                     L"Мониторит RustClient.exe и FortniteClient-Win64-Shipping.exe. REALTIME не используется.",
                                     on(t, "overview", "auto_priority")));
@@ -234,8 +255,29 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(toggle_row("gc_buffer", L"Увеличить буфер сборщика мусора",
                                     L"gc.buffer 2048 для 16 ГБ RAM, 4096 для 32 ГБ. Реже микрофризы при длинных сессиях.",
                                     on(t, "rust", "gc_buffer", false)));
+        p.rows.push_back(section("image", L"КАРТИНКА И ЦВЕТ"));
+        for (const auto& preset : visuals::presets()) {
+            const bool active = preset.id == ctx.image_preset;
+            std::wstring label = preset.title;
+            if (active) label += L"  (включено)";
+            p.rows.push_back(button("vis_" + preset.id, label, "visual:" + preset.id, active));
+        }
+        p.rows.push_back(button("nvidia", L"Открыть панель NVIDIA", "open_nvidia_panel", false,
+                                visuals::nvidia_installed()));
+        p.rows.push_back(note("image_note",
+                              L"Пресеты меняют гамму экрана через WinAPI (обратимо, без вмешательства в игру). "
+                              L"Максимальную насыщенность даёт Digital Vibrance в панели NVIDIA: 65-75%, "
+                              L"сглаживание — FXAA, режим питания — максимальная производительность."));
         p.rows.push_back(note("launch_note",
-                              L"Параметры запуска Steam: -high -maxMem=<RAM> -malloc=system -gc.buffer 2048"));
+                              L"Параметры запуска Steam: -high -maxMem=<RAM> -malloc=system -nolog "
+                              L"-window-mode exclusive -force-d3d11 -gc.buffer 2048"));
+        p.rows.push_back(button("apply_launch", L"Записать параметры запуска в Steam", "apply_launch_options", true,
+                                ctx.rust && ctx.rust->valid && !ctx.steam_dir.empty()));
+        p.rows.push_back(button("revert_launch", L"Вернуть параметры запуска из бэкапа", "revert_launch_options",
+                                false, ctx.rust && ctx.rust->valid && !ctx.steam_dir.empty()));
+        p.rows.push_back(note("launch_precondition",
+                              L"Steam должен быть закрыт: файл localconfig.vdf пишется атомарно, а перед записью "
+                              L"делается бэкап. Существующие ваши флаги сохраняются."));
         p.rows.push_back(button("open_cfg", L"Открыть папку cfg", "open_rust_cfg", false,
                                 ctx.rust && ctx.rust->valid));
         p.rows.push_back(button("export", L"Экспорт профиля RUST (.rop)", "export_rust", false));
@@ -332,6 +374,12 @@ std::vector<Page> build_pages(const PageContext& ctx) {
                                     L"autotuninglevel=restricted. Может ухудшить соединение на нестабильных каналах.",
                                     on(t, "system", "tcp_tuning", false), true));
         p.rows.push_back(button("flush_dns", L"Сбросить DNS-кэш сейчас", "flush_dns", false));
+        p.rows.push_back(section("repair", L"ИСПРАВЛЕНИЕ WINDOWS"));
+        p.rows.push_back(button("repair_windows", L"Исправить ошибки Windows (SFC + DISM)", "repair_windows", true,
+                                admin));
+        p.rows.push_back(note("repair_note",
+                              L"Запускает официальные sfc /scannow и DISM /RestoreHealth без окна консоли. "
+                              L"Занимает 10-30 минут, журнал пишется в папку логов."));
         p.rows.push_back(button("admin", L"Перезапустить от имени администратора", "elevate", false, !admin));
         p.rows.push_back(note("anticheat",
                               L"Приложение не внедряется в процессы и не читает память игры — совместимо с EAC и BattlEye."));
@@ -420,6 +468,10 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         }
         p.rows.push_back(toggle_row("minimize_on_apply", L"Сворачивать после применения",
                                     L"Удобно, если оптимизатор запускается из лаунчера.", ctx.settings->minimize_on_apply));
+        p.rows.push_back(toggle_row("close_on_launch", L"Закрываться при запуске игры",
+                                    L"Как только появляется RustClient.exe, оптимизатор сохраняет настройки и "
+                                    L"закрывается сам. Автопилот использует это всегда.",
+                                    ctx.settings->close_on_launch));
         p.rows.push_back(toggle_row("autostart_priority", L"Автоприоритет при старте",
                                     L"Сразу повышает приоритет уже запущенной игры.", ctx.settings->auto_priority));
         p.rows.push_back(section("update", L"ОБНОВЛЕНИЯ"));

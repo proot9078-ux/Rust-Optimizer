@@ -29,6 +29,10 @@ struct AppSettings {
     bool auto_purge = false;
     int auto_purge_interval_min = 15;
     bool minimize_on_apply = false;
+    // Close the optimizer as soon as the game window appears.
+    bool close_on_launch = true;
+    // Display preset id: off / soft / vivid / cinema (see ro/visuals.hpp).
+    std::string image_preset = "off";
     bool allow_affinity = false;
     std::wstring steam_dir;
     std::wstring rust_exe;
