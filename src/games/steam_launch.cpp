@@ -220,7 +220,7 @@ bool write_atomic_replace(const std::filesystem::path& file, std::string_view da
         return true;
     }
     log::error("steam: MoveFileEx failed for " + str::narrow(file.wstring()) + ": " +
-               str::narrow(win::last_error_text()));
+               win::last_error_text());
     fsx::remove_file(tmp);
     return false;
 }
