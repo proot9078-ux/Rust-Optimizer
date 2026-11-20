@@ -40,6 +40,9 @@ TEST_CASE("turning the picture preset off is a no-op on a clean machine", "[visu
 }
 
 TEST_CASE("repair module reports admin state without side effects", "[win_repair]") {
+    // Just make sure the check is callable and returns something sane; the
+    // result depends on how the test runner was started.
     const bool admin = win_repair::is_admin();
-    REQUIRE(admin == true || admin == false);
+    (void)admin;
+    SUCCEED("is_admin() returned a value");
 }

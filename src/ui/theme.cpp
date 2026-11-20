@@ -130,6 +130,111 @@ Themed ocean() {
     return t;
 }
 
+Themed cyberpunk() {
+    Themed t;
+    t.dark = true;
+    t.bg = rgb(0x0A0418);
+    t.sidebar = rgb(0x120629);
+    t.card = rgb(0x1B0B33);
+    t.card_hover = rgb(0x25114A);
+    t.border = rgb(0x3C1D6E);
+    t.text = rgb(0xFDF3FF);
+    t.text_dim = rgb(0xD3B6F5);
+    t.text_muted = rgb(0x9A7AC4);
+    t.accent = rgb(0xFF2E97);
+    t.accent_soft = rgb(0xFF2E97, 0.20f);
+    t.accent_text = rgb(0x1A0010);
+    t.ok = rgb(0x00F5D4);
+    t.warn = rgb(0xFFD60A);
+    t.err = rgb(0xFF4361);
+    t.toggle_off = rgb(0x2E1755);
+    return t;
+}
+
+Themed emerald() {
+    Themed t;
+    t.dark = true;
+    t.bg = rgb(0x04100C);
+    t.sidebar = rgb(0x081A14);
+    t.card = rgb(0x0D261E);
+    t.card_hover = rgb(0x123328);
+    t.border = rgb(0x1B4636);
+    t.text = rgb(0xE9FFF5);
+    t.text_dim = rgb(0xA6D9C4);
+    t.text_muted = rgb(0x6D9C89);
+    t.accent = rgb(0x10B981);
+    t.accent_soft = rgb(0x10B981, 0.20f);
+    t.accent_text = rgb(0x03150F);
+    t.ok = rgb(0x4ADE80);
+    t.warn = rgb(0xFACC15);
+    t.err = rgb(0xF87171);
+    t.toggle_off = rgb(0x15382C);
+    return t;
+}
+
+Themed sunset() {
+    Themed t;
+    t.dark = true;
+    t.bg = rgb(0x14080B);
+    t.sidebar = rgb(0x1F0B12);
+    t.card = rgb(0x2A1119);
+    t.card_hover = rgb(0x361622);
+    t.border = rgb(0x4A2030);
+    t.text = rgb(0xFFF4EE);
+    t.text_dim = rgb(0xF0BCA8);
+    t.text_muted = rgb(0xB2867A);
+    t.accent = rgb(0xFB7185);
+    t.accent_soft = rgb(0xFB7185, 0.20f);
+    t.accent_text = rgb(0x1C0408);
+    t.ok = rgb(0x34D399);
+    t.warn = rgb(0xFBBF24);
+    t.err = rgb(0xEF4444);
+    t.toggle_off = rgb(0x3B1A25);
+    return t;
+}
+
+Themed mono() {
+    Themed t;
+    t.dark = true;
+    t.bg = rgb(0x0B0B0C);
+    t.sidebar = rgb(0x121214);
+    t.card = rgb(0x1A1A1D);
+    t.card_hover = rgb(0x232327);
+    t.border = rgb(0x2E2E33);
+    t.text = rgb(0xFAFAFA);
+    t.text_dim = rgb(0xBDBDC4);
+    t.text_muted = rgb(0x86868F);
+    t.accent = rgb(0xE5E5EA);
+    t.accent_soft = rgb(0xE5E5EA, 0.16f);
+    t.accent_text = rgb(0x0B0B0C);
+    t.ok = rgb(0x86EFAC);
+    t.warn = rgb(0xFDE68A);
+    t.err = rgb(0xFCA5A5);
+    t.toggle_off = rgb(0x2C2C31);
+    return t;
+}
+
+Themed sakura() {
+    Themed t;
+    t.dark = false;
+    t.bg = rgb(0xFFF6FA);
+    t.sidebar = rgb(0xFFFFFF);
+    t.card = rgb(0xFFFFFF);
+    t.card_hover = rgb(0xFFEDF5);
+    t.border = rgb(0xF6D6E6);
+    t.text = rgb(0x2B1420);
+    t.text_dim = rgb(0x6F4B5C);
+    t.text_muted = rgb(0x9C7C8B);
+    t.accent = rgb(0xDB2777);
+    t.accent_soft = rgb(0xDB2777, 0.12f);
+    t.accent_text = rgb(0xFFFFFF);
+    t.ok = rgb(0x15803D);
+    t.warn = rgb(0xB45309);
+    t.err = rgb(0xB91C1C);
+    t.toggle_off = rgb(0xF5DCE8);
+    return t;
+}
+
 }  // namespace
 
 Themed for_mode(bool dark_mode) { return dark_mode ? dark() : light(); }
@@ -140,11 +245,17 @@ Themed preset(std::string_view id) {
     if (id == "neon") return neon();
     if (id == "rust") return rust();
     if (id == "ocean") return ocean();
+    if (id == "cyberpunk") return cyberpunk();
+    if (id == "emerald") return emerald();
+    if (id == "sunset") return sunset();
+    if (id == "mono") return mono();
+    if (id == "sakura") return sakura();
     return dark();
 }
 
 const std::vector<std::string>& theme_ids() {
-    static const std::vector<std::string> ids = {"dark", "midnight", "light", "neon", "rust", "ocean"};
+    static const std::vector<std::string> ids = {"dark",    "midnight", "light", "neon",   "rust", "ocean",
+                                                 "cyberpunk", "emerald", "sunset", "mono", "sakura"};
     return ids;
 }
 
@@ -154,6 +265,11 @@ const wchar_t* theme_title(std::string_view id) {
     if (id == "neon") return L"Неон";
     if (id == "rust") return L"RUST";
     if (id == "ocean") return L"Океан";
+    if (id == "cyberpunk") return L"Киберпанк";
+    if (id == "emerald") return L"Изумруд";
+    if (id == "sunset") return L"Закат";
+    if (id == "mono") return L"Монохром";
+    if (id == "sakura") return L"Сакура";
     return L"Тёмная";
 }
 

@@ -1259,6 +1259,10 @@ private:
         o.parallax_off = get("parallax_off", false);
         o.shafts_off = get("shafts_off", true);
         o.chromatic_off = get("chromatic_off", true);
+        o.quality_low = get("quality_low", true);
+        o.maxdecals_off = get("maxdecals_off", true);
+        o.occlusion_on = get("occlusion_on", true);
+        o.lowres = get("lowres", false);
         o.gc_buffer = get("gc_buffer", false);
         o.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024 * 1024 * 1024 ? 4096 : 2048;
         o.launch_options = rust::recommended_launch_options(
@@ -1321,6 +1325,7 @@ private:
         const bool hags = is_on("system", "hags_on");
         const bool dns = is_on("system", "dns_flush");
         const bool tcp = is_on("system", "tcp_tuning");
+        const bool power = is_on("system", "power_high");
         const bool affinity = is_on("system", "affinity");
         const auto cpu = state_->cpu;
         const auto rust_exe = state_->games.rust.exe_path;
@@ -1342,6 +1347,7 @@ private:
             if (hags && system_tweaks::set_hags(true, error)) ++ok;
             if (dns && system_tweaks::flush_dns(error)) ++ok;
             if (tcp && system_tweaks::set_tcp_autotuning(false, error)) ++ok;
+            if (power && system_tweaks::set_power_plan(true, error)) ++ok;
             if (fse_off) {
                 if (!rust_exe.empty() && system_tweaks::set_fullscreen_optimizations(rust_exe, false, error)) ++ok;
                 if (!fn_exe.empty() && system_tweaks::set_fullscreen_optimizations(fn_exe, false, error)) ++ok;
@@ -1395,6 +1401,7 @@ private:
         const bool fse_off = is_on("system", "fse_off");
         const bool hags = is_on("system", "hags_on");
         const bool dns = is_on("system", "dns_flush");
+        const bool power = is_on("system", "power_high");
         const auto fn_exe = state_->games.fortnite.exe_path;
 
         run_async(L"Применяю рекомендованный профиль…", [=]() -> std::wstring {
@@ -1423,6 +1430,7 @@ private:
             if (game_mode && system_tweaks::set_game_mode(true, error)) ++ok;
             if (hags && system_tweaks::set_hags(true, error)) ++ok;
             if (dns && system_tweaks::flush_dns(error)) ++ok;
+            if (power && system_tweaks::set_power_plan(true, error)) ++ok;
             if (fse_off) {
                 if (!rust_exe.empty() && system_tweaks::set_fullscreen_optimizations(rust_exe, false, error)) ++ok;
                 if (!fn_exe.empty() && system_tweaks::set_fullscreen_optimizations(fn_exe, false, error)) ++ok;
@@ -1772,40 +1780,74 @@ private:
             });
             return;
         }
-        if (id == "auto_pilot") {
+        if (id == "auto_pilot" || id == "boost_fps") {
+            // "boost_fps" is the one-click maximum-FPS switch: every tweak,
+            // every cache, power plan and launch options are forced on, then
+            // RUST starts and the window closes itself. "auto_pilot" obeys the
+            // per-page toggles instead.
+            const bool boost = id == "boost_fps";
             const auto exe = state_->games.rust.exe_path;
             if (exe.empty()) {
                 set_status(L"RUST не найден — сначала выполните поиск игр");
                 return;
             }
-            const auto rust_opt = rust_options();
+            auto rust_opt = rust_options();
+            if (boost) {
+                // Maximum-FPS preset regardless of the page switches.
+                rust_opt.grass_off = true;
+                rust_opt.grass_displacement = true;
+                rust_opt.grass_shadowcast = true;
+                rust_opt.grass_shadowreceive = true;
+                rust_opt.ssaa_off = true;
+                rust_opt.vsync_off = true;
+                rust_opt.shadows_off = true;
+                rust_opt.half_res_sss = true;
+                rust_opt.pixellight_off = true;
+                rust_opt.depth_of_field_off = true;
+                rust_opt.motion_blur_off = true;
+                rust_opt.parallax_off = true;
+                rust_opt.shafts_off = true;
+                rust_opt.chromatic_off = true;
+                rust_opt.quality_low = true;
+                rust_opt.maxdecals_off = true;
+                rust_opt.occlusion_on = true;
+                rust_opt.lowres = false;  // keep native resolution: no blur
+                rust_opt.gc_buffer = false;
+                rust_opt.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull ? 4096 : 2048;
+            }
             const auto fn_opt = fortnite_options();
             const auto fn_exe = state_->games.fortnite.exe_path;
             const auto steam_dir = state_->games.steam.steam_dir;
             const unsigned ram_mb = static_cast<unsigned>(state_->hw.ram_bytes / (1024ull * 1024ull));
             const std::string vendor = state_->hw.gpu.vendor;
             const bool gc_4gb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull;
-            const bool purge = is_on("system", "purge_on_apply");
-            const bool dvr_off = is_on("system", "dvr_off");
-            const bool game_mode = is_on("system", "game_mode_on");
-            const bool fse_off = is_on("system", "fse_off");
-            const bool hags = is_on("system", "hags_on");
-            const bool dns = is_on("system", "dns_flush");
-            const bool want_clean = is_on("overview", "autopilot_clean");
-            const bool want_visuals = is_on("overview", "autopilot_visuals");
-            const bool want_repair = is_on("overview", "repair_windows") && win_repair::is_admin();
+            const bool purge = boost || is_on("system", "purge_on_apply");
+            const bool dvr_off = boost || is_on("system", "dvr_off");
+            const bool game_mode = boost || is_on("system", "game_mode_on");
+            const bool fse_off = boost || is_on("system", "fse_off");
+            const bool hags = boost || is_on("system", "hags_on");
+            const bool dns = boost || is_on("system", "dns_flush");
+            const bool power_high = boost || is_on("system", "power_high");
+            const bool want_clean = boost || is_on("overview", "autopilot_clean");
+            const bool want_visuals = boost || is_on("overview", "autopilot_visuals");
+            const bool want_repair = !boost && is_on("overview", "repair_windows") && win_repair::is_admin();
             std::vector<std::string> clean_ids;
             std::string preset_id;
             {
                 std::lock_guard<std::mutex> lock(state_->mutex);
-                for (const auto& target : clean::targets()) {
-                    const auto it = state_->toggles.find("cleaner." + target.id);
-                    if (it == state_->toggles.end() || it->second) clean_ids.push_back(target.id);
+                if (boost) {
+                    clean_ids = clean::boost_ids();
+                } else {
+                    for (const auto& target : clean::targets()) {
+                        const auto it = state_->toggles.find("cleaner." + target.id);
+                        if (it == state_->toggles.end() || it->second) clean_ids.push_back(target.id);
+                    }
                 }
                 preset_id = state_->settings.image_preset;
             }
 
-            run_async(L"Автопилот: чиню, чищу и запускаю RUST…",
+            run_async(boost ? L"БУСТ FPS: чищу, применяю всё и запускаю RUST…"
+                            : L"Автопилот: чиню, чищу и запускаю RUST…",
                       [=, shared = state_]() -> std::wstring {
                           int ok = 0;
                           std::wstring problems;
@@ -1848,6 +1890,7 @@ private:
                           if (game_mode && system_tweaks::set_game_mode(true, error)) ++ok;
                           if (hags && system_tweaks::set_hags(true, error)) ++ok;
                           if (dns && system_tweaks::flush_dns(error)) ++ok;
+                          if (power_high && system_tweaks::set_power_plan(true, error)) ++ok;
                           if (fse_off && system_tweaks::set_fullscreen_optimizations(exe, false, error)) ++ok;
                           if (fse_off && !fn_exe.empty() &&
                               system_tweaks::set_fullscreen_optimizations(fn_exe, false, error)) {
@@ -1902,7 +1945,8 @@ private:
                           // appears, even if "close_on_launch" is switched off.
                           shared->close_after_launch = true;
 
-                          std::wstring status = L"Автопилот: " + std::to_wstring(ok) + L" шагов применено. ";
+                          std::wstring status = (boost ? L"БУСТ FPS: " : L"Автопилот: ") +
+                                                std::to_wstring(ok) + L" шагов применено. ";
                           status += opts_text + L" " + visual_text + L" RUST запускается. ";
                           status += L"Окно закроется само при появлении игры.";
                           if (!problems.empty()) status += L" " + problems;

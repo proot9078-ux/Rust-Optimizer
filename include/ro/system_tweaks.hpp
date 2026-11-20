@@ -19,6 +19,12 @@ bool set_game_dvr(bool enabled, std::string& error);
 bool set_game_mode(bool enabled, std::string& error);
 bool set_hags(bool enabled, std::string& error);
 
+// Power scheme: switches to "Высокая производительность" (or Ultimate
+// Performance when available) and remembers the original GUID, so high = false
+// restores exactly what the user had. No registry edits, uses PowrProf.
+bool set_power_plan(bool high, std::string& error);
+bool power_plan_high();
+
 struct GameDvrState {
     bool supported = true;
     bool enabled = false;

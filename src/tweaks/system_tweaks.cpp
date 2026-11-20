@@ -1,6 +1,13 @@
 #include "ro/system_tweaks.hpp"
 
 #include <windows.h>
+#include <objbase.h>
+#include <powrprof.h>
+
+#include <filesystem>
+#include <iterator>
+#include <optional>
+#include <string_view>
 
 #include "ro/fs.hpp"
 #include "ro/hardware.hpp"
@@ -180,6 +187,86 @@ bool open_config_folder(const std::wstring& path, std::string& error) {
         return false;
     }
     return true;
+}
+
+namespace {
+
+constexpr const wchar_t* kHighPlan = L"{8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c}";
+constexpr const wchar_t* kUltimatePlan = L"{e9a42b02-d5df-448d-aa00-03f14749eb61}";
+
+std::filesystem::path plan_file() { return fsx::data_dir() / L"power-plan.txt"; }
+
+std::optional<GUID> parse_guid(std::wstring_view text) {
+    if (text.empty()) return std::nullopt;
+    GUID g{};
+    if (FAILED(::CLSIDFromString(std::wstring(text).c_str(), &g))) return std::nullopt;
+    return g;
+}
+
+std::optional<GUID> active_plan() {
+    GUID* raw = nullptr;
+    if (::PowerGetActiveScheme(nullptr, &raw) != ERROR_SUCCESS || raw == nullptr) return std::nullopt;
+    const GUID g = *raw;
+    ::LocalFree(raw);
+    return g;
+}
+
+std::wstring guid_text(const GUID& g) {
+    wchar_t buffer[64]{};
+    const int n = ::StringFromGUID2(g, buffer, static_cast<int>(std::size(buffer)));
+    if (n <= 0) return {};
+    return std::wstring(buffer, static_cast<std::size_t>(n - 1));
+}
+
+bool apply_plan(const wchar_t* text) {
+    const auto g = parse_guid(text);
+    if (!g) return false;
+    return ::PowerSetActiveScheme(nullptr, &*g) == ERROR_SUCCESS;
+}
+
+}  // namespace
+
+bool set_power_plan(bool high, std::string& error) {
+    const auto current = active_plan();
+    if (!current) {
+        error = "не удалось прочитать активную схему питания";
+        return false;
+    }
+    if (high) {
+        // Remember the original scheme so "Вернуть" restores it exactly.
+        if (!fsx::is_regular_file(plan_file())) {
+            fsx::ensure_dir(fsx::data_dir());
+            fsx::write_text(plan_file(), str::narrow(guid_text(*current)));
+        }
+        if (apply_plan(kHighPlan) || apply_plan(kUltimatePlan)) {
+            log::success("system: power plan switched to high performance");
+            return true;
+        }
+        error = "схема «Высокая производительность» недоступна на этом устройстве";
+        return false;
+    }
+    const auto saved = fsx::read_text(plan_file());
+    if (!saved) {
+        error = "сохранённая схема питания не найдена";
+        return false;
+    }
+    if (!apply_plan(str::widen(str::trim(*saved)).c_str())) {
+        error = "не удалось вернуть прежнюю схему питания";
+        return false;
+    }
+    fsx::remove_file(plan_file());
+    log::success("system: original power plan restored");
+    return true;
+}
+
+bool power_plan_high() {
+    const auto current = active_plan();
+    if (!current) return false;
+    const auto high = parse_guid(kHighPlan);
+    const auto ultimate = parse_guid(kUltimatePlan);
+    if (high && ::IsEqualGUID(*current, *high)) return true;
+    if (ultimate && ::IsEqualGUID(*current, *ultimate)) return true;
+    return false;
 }
 
 }  // namespace ro::system_tweaks

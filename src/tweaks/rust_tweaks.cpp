@@ -176,6 +176,10 @@ json::Value to_json(const Options& o) {
     j["parallax_off"] = o.parallax_off;
     j["shafts_off"] = o.shafts_off;
     j["chromatic_off"] = o.chromatic_off;
+    j["quality_low"] = o.quality_low;
+    j["maxdecals_off"] = o.maxdecals_off;
+    j["occlusion_on"] = o.occlusion_on;
+    j["lowres"] = o.lowres;
     j["gc_buffer"] = o.gc_buffer;
     j["gc_buffer_mb"] = o.gc_buffer_mb;
     j["net_backup"] = o.net_backup;
@@ -201,6 +205,10 @@ Options from_json(const json::Value& v) {
     o.parallax_off = json::get_bool(v, "parallax_off", o.parallax_off);
     o.shafts_off = json::get_bool(v, "shafts_off", o.shafts_off);
     o.chromatic_off = json::get_bool(v, "chromatic_off", o.chromatic_off);
+    o.quality_low = json::get_bool(v, "quality_low", o.quality_low);
+    o.maxdecals_off = json::get_bool(v, "maxdecals_off", o.maxdecals_off);
+    o.occlusion_on = json::get_bool(v, "occlusion_on", o.occlusion_on);
+    o.lowres = json::get_bool(v, "lowres", o.lowres);
     o.gc_buffer = json::get_bool(v, "gc_buffer", o.gc_buffer);
     o.gc_buffer_mb = static_cast<int>(json::get_int(v, "gc_buffer_mb", o.gc_buffer_mb));
     o.net_backup = json::get_bool(v, "net_backup", o.net_backup);
@@ -251,6 +259,16 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"graphics.parallax", "false"},
         {"graphics.shafts", "false"},
         {"graphics.chromaticaberration", "false"},
+        {"graphics.grassquality", "0"},
+        {"graphics.globalreflectionquality", "0"},
+        {"graphics.waterquality", "0"},
+        {"graphics.effectquality", "0"},
+        {"graphics.skinquality", "0"},
+        {"graphics.objectquality", "0"},
+        {"graphics.shadowquality", "1"},
+        {"graphics.maxdecals", "0"},
+        {"graphics.occlusionculling", "true"},
+        {"graphics.renderscale", "0.85"},
         {"gc.buffer", std::to_string(opt.gc_buffer_mb)},
     };
     const std::map<std::string, bool> enabled = {
@@ -268,6 +286,16 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"graphics.parallax", opt.parallax_off},
         {"graphics.shafts", opt.shafts_off},
         {"graphics.chromaticaberration", opt.chromatic_off},
+        {"graphics.grassquality", opt.quality_low},
+        {"graphics.globalreflectionquality", opt.quality_low},
+        {"graphics.waterquality", opt.quality_low},
+        {"graphics.effectquality", opt.quality_low},
+        {"graphics.skinquality", opt.quality_low},
+        {"graphics.objectquality", opt.quality_low},
+        {"graphics.shadowquality", opt.quality_low},
+        {"graphics.maxdecals", opt.maxdecals_off},
+        {"graphics.occlusionculling", opt.occlusion_on},
+        {"graphics.renderscale", opt.lowres},
         {"gc.buffer", opt.gc_buffer},
     };
 

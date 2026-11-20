@@ -101,6 +101,10 @@ std::map<std::string, bool> default_toggles() {
         {"rust.parallax_off", false},
         {"rust.shafts_off", true},
         {"rust.chromatic_off", true},
+        {"rust.quality_low", true},
+        {"rust.maxdecals_off", true},
+        {"rust.occlusion_on", true},
+        {"rust.lowres", false},
         {"fortnite.unlimited_fps", true},
         {"fortnite.vsync_off", true},
         {"fortnite.fullscreen", true},
@@ -117,6 +121,7 @@ std::map<std::string, bool> default_toggles() {
         {"system.fse_off", false},
         {"system.hags_on", false},
         {"system.dns_flush", true},
+        {"system.power_high", true},
         {"system.tcp_tuning", false},
         {"system.affinity", false},
         {"settings.dark_theme", true},
@@ -131,6 +136,29 @@ std::map<std::string, bool> default_toggles() {
         {"cleaner.shader_amd", true},
         {"cleaner.crash_dumps", true},
         {"cleaner.staging", true},
+        {"cleaner.inetcache", true},
+        {"cleaner.wer", true},
+        {"cleaner.download_installers", true},
+        {"cleaner.store_cache", true},
+        {"cleaner.windows_update", false},
+        {"cleaner.recycle_bin", false},
+        {"cleaner.shader_intel", true},
+        {"cleaner.chrome", true},
+        {"cleaner.edge", true},
+        {"cleaner.brave", true},
+        {"cleaner.vivaldi", true},
+        {"cleaner.yandex", true},
+        {"cleaner.chromium", true},
+        {"cleaner.opera", true},
+        {"cleaner.opera_gx", true},
+        {"cleaner.firefox", true},
+        {"cleaner.discord", true},
+        {"cleaner.teams", true},
+        {"cleaner.epic_webcache", true},
+        {"cleaner.steam_cache", true},
+        {"cleaner.spotify", true},
+        {"cleaner.unity_cache", true},
+        {"cleaner.programdata_temp", true},
     };
 }
 
@@ -170,7 +198,14 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(info("os", L"Система", ctx.hw ? ctx.hw->os_display : L"—"));
 
         p.rows.push_back(section("quick", L"БЫСТРЫЕ ДЕЙСТВИЯ"));
-        p.rows.push_back(button("autopilot", L"ОПТИМИЗИРОВАТЬ ВСЁ, ЗАПУСТИТЬ RUST И ЗАКРЫТЬСЯ", "auto_pilot", true,
+        p.rows.push_back(button("boost", L"БУСТ FPS · ВСЁ · RUST · ЗАКРЫТЬСЯ", "boost_fps", true,
+                                ctx.rust && ctx.rust->valid));
+        p.rows.push_back(note("boost_hint",
+                              L"Один клик: чистка всех кэшей (браузеры, Discord, Epic, Steam, GPU), "
+                              L"client.cfg по максимуму FPS, конфиги Fortnite, твики Windows, схема питания "
+                              L"«Высокая производительность», параметры запуска Steam, сочная картинка, "
+                              L"запуск RUST и автоматическое закрытие оптимизатора."));
+        p.rows.push_back(button("autopilot", L"АВТОПИЛОТ · RUST · ЗАКРЫТЬСЯ", "auto_pilot", false,
                                 ctx.rust && ctx.rust->valid));
         p.rows.push_back(note("autopilot_hint",
                               L"Автопилот чинит систему, чистит кэш, применяет client.cfg и системные твики, "
@@ -251,6 +286,19 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(toggle_row("chromatic_off", L"Отключить хроматическую аберрацию",
                                     L"graphics.chromaticaberration false — косметический эффект, немного GPU.",
                                     on(t, "rust", "chromatic_off")));
+        p.rows.push_back(toggle_row("quality_low", L"Все ползунки качества в минимум",
+                                    L"Трава, вода, отражения, эффекты, кожа, объекты и тени — самый низкий уровень. "
+                                    L"Самый большой прирост FPS.",
+                                    on(t, "rust", "quality_low")));
+        p.rows.push_back(toggle_row("maxdecals_off", L"Убрать декали",
+                                    L"graphics.maxdecals 0 — меньше следов пуль и крови на поверхностях.",
+                                    on(t, "rust", "maxdecals_off")));
+        p.rows.push_back(toggle_row("occlusion_on", L"Включить occlusion culling",
+                                    L"graphics.occlusionculling true — не рисует скрытое за стенами.",
+                                    on(t, "rust", "occlusion_on")));
+        p.rows.push_back(toggle_row("lowres", L"Рендер в 85% разрешения",
+                                    L"graphics.renderscale 0.85 — заметный прирост FPS, картинка мягче.",
+                                    on(t, "rust", "lowres", false)));
         p.rows.push_back(section("perf", L"ПРОИЗВОДИТЕЛЬНОСТЬ"));
         p.rows.push_back(toggle_row("gc_buffer", L"Увеличить буфер сборщика мусора",
                                     L"gc.buffer 2048 для 16 ГБ RAM, 4096 для 32 ГБ. Реже микрофризы при длинных сессиях.",
@@ -360,6 +408,9 @@ std::vector<Page> build_pages(const PageContext& ctx) {
                                     on(t, "system", "fse_off", false)));
 
         p.rows.push_back(section("gaming", L"ИГРОВЫЕ ФУНКЦИИ WINDOWS"));
+        p.rows.push_back(toggle_row("power_high", L"Схема питания «Высокая производительность»",
+                                    L"Переключает схему через PowrProf и запоминает прежнюю — её можно вернуть.",
+                                    on(t, "system", "power_high")));
         p.rows.push_back(toggle_row("dvr_off", L"Отключить Game DVR",
                                     L"Прекращает фоновую запись — освобождает ресурсы.",
                                     on(t, "system", "dvr_off", false)));

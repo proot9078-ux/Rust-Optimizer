@@ -96,7 +96,7 @@ set(RO_CORE_SOURCES
 
 add_library(ro_core STATIC ${RO_CORE_SOURCES})
 target_include_directories(ro_core PUBLIC include)
-target_link_libraries(ro_core PUBLIC ro_thirdparty winhttp dwrite d2d1 gdiplus gdi32 user32 ole32 shell32 advapi32 psapi dnsapi version winmm)
+target_link_libraries(ro_core PUBLIC ro_thirdparty winhttp dwrite d2d1 gdiplus gdi32 user32 ole32 shell32 advapi32 psapi dnsapi version winmm powrprof)
 target_compile_definitions(ro_core PUBLIC
     UNICODE _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -192,6 +192,7 @@ if(RO_BUILD_TESTS)
       tests/test_steam_launch.cpp
       tests/test_updater.cpp
       tests/test_visuals.cpp
+    tests/test_cleaner.cpp
       third_party/catch_amalgamated.cpp)
   target_include_directories(ro_tests PRIVATE include third_party tests)
   target_link_libraries(ro_tests PRIVATE ro_core)

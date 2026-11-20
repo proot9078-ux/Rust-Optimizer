@@ -30,6 +30,10 @@ struct Options {
     bool parallax_off = false;
     bool shafts_off = true;
     bool chromatic_off = true;
+    bool quality_low = true;      // keep every quality slider at its minimum
+    bool maxdecals_off = true;    // graphics.maxdecals 0
+    bool occlusion_on = true;     // graphics.occlusionculling true
+    bool lowres = false;          // graphics.renderscale 0.85 (blurrier, more fps)
     bool gc_buffer = false;
     int gc_buffer_mb = 2048;
     bool net_backup = false;
