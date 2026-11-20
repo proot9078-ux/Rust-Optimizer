@@ -24,14 +24,14 @@ PowerShell runtime, no external dependencies.
 
 | Page | What it does |
 |---|---|
-| **Обзор** | Hardware summary, detected game paths, autopilot (repair, clean, apply everything, vivid picture, launch RUST, close itself), game launch, standby purge |
-| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, GC buffer), Steam Launch Options writer (`localconfig.vdf`) with revert, picture presets + NVIDIA panel shortcut, `.rop` profile import/export |
+| **Обзор** | Hardware summary, detected game paths, **БУСТ FPS** (one click: clean every cache, apply everything, launch RUST, close itself), autopilot, game launch, standby purge |
+| **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, quality sliders, decals, occlusion culling, GC buffer), Steam Launch Options writer (`localconfig.vdf`) with revert, picture presets + NVIDIA panel shortcut, `.rop` profile import/export |
 | **FORTNITE** | `GameUserSettings.ini` + `Engine.ini` tweaks (frame limit, VSync, fullscreen, motion blur, bloom, lens flare, DOF, shadows, streaming pool), launch options |
-| **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity, SFC + DISM repair |
-| **Очистка** | Scan and clean user/Windows temp folders, DirectX/NVIDIA/AMD shader caches, crash dumps and updater staging (configs and saves untouched) |
+| **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, power scheme, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity, SFC + DISM repair |
+| **Очистка** | Scan and clean user/Windows temp folders, DirectX/NVIDIA/AMD/Intel shader caches, crash dumps, updater staging, and cache-only browser data for Chrome, Edge, Brave, Vivaldi, Yandex, Chromium, Opera, Opera GX, Firefox plus Discord, Teams, Epic, Steam, Spotify, Unity (configs, saves, logins and bookmarks untouched) |
 | **Профили** | Save/load/import/export tweak profiles (`.rop`) |
 | **Диагностика** | One-click system/hardware/games/log report saved to `%LOCALAPPDATA%\RustOptimizer\reports` |
-| **Настройки** | Six themes (dark, midnight, light, neon, RUST, ocean), mandatory updates, auto-priority, minimize-on-apply, data folders |
+| **Настройки** | Eleven themes (dark, midnight, light, neon, RUST, ocean, cyberpunk, emerald, sunset, mono, sakura), mandatory updates, auto-priority, minimize-on-apply, close-on-game-launch, data folders |
 | **Логи** | Live session log with levels, plus the on-disk log file |
 
 Scrolling works without a mouse wheel: drag the scrollbar, click the track, or
