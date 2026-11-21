@@ -180,6 +180,8 @@ json::Value to_json(const Options& o) {
     j["maxdecals_off"] = o.maxdecals_off;
     j["occlusion_on"] = o.occlusion_on;
     j["lowres"] = o.lowres;
+    j["clouds_off"] = o.clouds_off;
+    j["fog_off"] = o.fog_off;
     j["gc_buffer"] = o.gc_buffer;
     j["gc_buffer_mb"] = o.gc_buffer_mb;
     j["net_backup"] = o.net_backup;
@@ -209,6 +211,8 @@ Options from_json(const json::Value& v) {
     o.maxdecals_off = json::get_bool(v, "maxdecals_off", o.maxdecals_off);
     o.occlusion_on = json::get_bool(v, "occlusion_on", o.occlusion_on);
     o.lowres = json::get_bool(v, "lowres", o.lowres);
+    o.clouds_off = json::get_bool(v, "clouds_off", o.clouds_off);
+    o.fog_off = json::get_bool(v, "fog_off", o.fog_off);
     o.gc_buffer = json::get_bool(v, "gc_buffer", o.gc_buffer);
     o.gc_buffer_mb = static_cast<int>(json::get_int(v, "gc_buffer_mb", o.gc_buffer_mb));
     o.net_backup = json::get_bool(v, "net_backup", o.net_backup);
@@ -244,7 +248,7 @@ ApplyReport apply(const Paths& p, const Options& opt) {
     report.backup_dir = str::narrow(backup_dir.wstring());
 
     CfgFile cfg = CfgFile::parse(*existing);
-    const std::vector<std::pair<std::string, std::string>> desired = {
+    std::vector<std::pair<std::string, std::string>> desired = {
         {"grass.on", "false"},
         {"grass.displacement", "false"},
         {"grass.shadowcast", "false"},
@@ -259,18 +263,25 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"graphics.parallax", "false"},
         {"graphics.shafts", "false"},
         {"graphics.chromaticaberration", "false"},
-        {"graphics.grassquality", "0"},
-        {"graphics.globalreflectionquality", "0"},
-        {"graphics.waterquality", "0"},
-        {"graphics.effectquality", "0"},
-        {"graphics.skinquality", "0"},
-        {"graphics.objectquality", "0"},
-        {"graphics.shadowquality", "1"},
-        {"graphics.maxdecals", "0"},
-        {"graphics.occlusionculling", "true"},
-        {"graphics.renderscale", "0.85"},
-        {"gc.buffer", std::to_string(opt.gc_buffer_mb)},
+        {"graphics.volumetricclouds", "false"},
+        {"graphics.volumetricfog", "false"},
     };
+    // Quality sliders are numeric: writing "true" there would be ignored by the
+    // game, so they are appended only when the user asked for the minimum.
+    if (opt.quality_low) {
+        desired.emplace_back("graphics.grassquality", "0");
+        desired.emplace_back("graphics.globalreflectionquality", "0");
+        desired.emplace_back("graphics.waterquality", "0");
+        desired.emplace_back("graphics.effectquality", "0");
+        desired.emplace_back("graphics.skinquality", "0");
+        desired.emplace_back("graphics.objectquality", "0");
+        desired.emplace_back("graphics.shadowquality", "1");
+    }
+    if (opt.maxdecals_off) desired.emplace_back("graphics.maxdecals", "0");
+    if (opt.occlusion_on) desired.emplace_back("graphics.occlusionculling", "true");
+    if (opt.lowres) desired.emplace_back("graphics.renderscale", "0.85");
+    if (opt.gc_buffer) desired.emplace_back("gc.buffer", std::to_string(opt.gc_buffer_mb));
+
     const std::map<std::string, bool> enabled = {
         {"grass.on", opt.grass_off},
         {"grass.displacement", opt.grass_displacement},
@@ -286,23 +297,15 @@ ApplyReport apply(const Paths& p, const Options& opt) {
         {"graphics.parallax", opt.parallax_off},
         {"graphics.shafts", opt.shafts_off},
         {"graphics.chromaticaberration", opt.chromatic_off},
-        {"graphics.grassquality", opt.quality_low},
-        {"graphics.globalreflectionquality", opt.quality_low},
-        {"graphics.waterquality", opt.quality_low},
-        {"graphics.effectquality", opt.quality_low},
-        {"graphics.skinquality", opt.quality_low},
-        {"graphics.objectquality", opt.quality_low},
-        {"graphics.shadowquality", opt.quality_low},
-        {"graphics.maxdecals", opt.maxdecals_off},
-        {"graphics.occlusionculling", opt.occlusion_on},
-        {"graphics.renderscale", opt.lowres},
-        {"gc.buffer", opt.gc_buffer},
+        {"graphics.volumetricclouds", opt.clouds_off},
+        {"graphics.volumetricfog", opt.fog_off},
     };
 
     int changed = 0;
     std::vector<std::pair<std::string, std::string>> append;
     for (const auto& [key, value] : desired) {
-        if (!enabled.at(key)) continue;
+        const auto it = enabled.find(key);
+        if (it != enabled.end() && !it->second) continue;
         ++report.total;
         if (cfg.has(key)) {
             changed += cfg.set(key, value);

@@ -1263,6 +1263,8 @@ private:
         o.maxdecals_off = get("maxdecals_off", true);
         o.occlusion_on = get("occlusion_on", true);
         o.lowres = get("lowres", false);
+        o.clouds_off = get("clouds_off", true);
+        o.fog_off = get("fog_off", true);
         o.gc_buffer = get("gc_buffer", false);
         o.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024 * 1024 * 1024 ? 4096 : 2048;
         o.launch_options = rust::recommended_launch_options(
@@ -1812,6 +1814,8 @@ private:
                 rust_opt.maxdecals_off = true;
                 rust_opt.occlusion_on = true;
                 rust_opt.lowres = false;  // keep native resolution: no blur
+                rust_opt.clouds_off = true;
+                rust_opt.fog_off = true;
                 rust_opt.gc_buffer = false;
                 rust_opt.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull ? 4096 : 2048;
             }

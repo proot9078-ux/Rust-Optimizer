@@ -18,6 +18,13 @@ std::wstring key_of(const D2D1_COLOR_F& c) {
 
 D2D1_RECT_F to_rect(const Rect& r) { return D2D1::RectF(r.x, r.y, r.x + r.w, r.y + r.h); }
 
+// Blends `c` towards white (t > 0) or black (t < 0) by |t|. Keeps alpha.
+D2D1_COLOR_F shade(const D2D1_COLOR_F& c, float t) {
+    const float to = t >= 0.0f ? 1.0f : 0.0f;
+    const float k = std::clamp(t >= 0.0f ? t : -t, 0.0f, 1.0f);
+    return D2D1::ColorF(c.r + (to - c.r) * k, c.g + (to - c.g) * k, c.b + (to - c.b) * k, c.a);
+}
+
 }  // namespace
 
 Painter::Painter(ID2D1RenderTarget* rt, IDWriteFactory* dw, const Themed& theme, float scale)
@@ -139,15 +146,18 @@ void Painter::toggle(const Rect& r, bool on, bool hovered) {
 void Painter::button(const Rect& r, const std::wstring& label, bool primary, bool hovered, bool enabled) {
     const float radius = r.h * 0.5f;
     if (primary) {
-        const D2D1_COLOR_F top = enabled ? (hovered ? theme_.accent : theme_.accent) : theme_.toggle_off;
-        gradient_round(r, radius, top, top);
-        if (!enabled) {
-            fill_round(r, radius, theme_.toggle_off);
-        }
-        text(label, r, enabled ? theme_.accent_text : theme_.text_muted, r.h * 0.38f, 600, 1, false);
+        // Vertical accent gradient with a brighter top edge; hover lifts it.
+        const auto base = theme_.accent;
+        const D2D1_COLOR_F top =
+            enabled ? shade(base, hovered ? 0.34f : 0.22f) : theme_.toggle_off;
+        const D2D1_COLOR_F bottom =
+            enabled ? (hovered ? base : shade(base, -0.10f)) : theme_.toggle_off;
+        gradient_round(r, radius, top, bottom);
+        if (enabled && hovered) stroke_round(r, radius, shade(base, 0.45f), 1.2f);
+        text(label, r, enabled ? theme_.accent_text : theme_.text_muted, r.h * 0.38f, 700, 1, false);
     } else {
         fill_round(r, radius, hovered ? theme_.card_hover : theme_.card);
-        stroke_round(r, radius, hovered ? theme_.accent : theme_.border, 1.0f);
+        stroke_round(r, radius, hovered ? theme_.accent : theme_.border, hovered ? 1.4f : 1.0f);
         text(label, r, enabled ? theme_.text : theme_.text_muted, r.h * 0.36f, 500, 1, false);
     }
 }
@@ -161,8 +171,8 @@ void Painter::progress(const Rect& r, float fraction, const D2D1_COLOR_F& color)
 }
 
 void Painter::card(const Rect& r, bool hovered) {
-    fill_round(r, 14.0f, hovered ? theme_.card_hover : theme_.card);
-    stroke_round(r, 14.0f, theme_.border, 1.0f);
+    fill_round(r, 16.0f, hovered ? theme_.card_hover : theme_.card);
+    stroke_round(r, 16.0f, hovered ? theme_.accent : theme_.border, hovered ? 1.4f : 1.0f);
 }
 
 }  // namespace ro::ui

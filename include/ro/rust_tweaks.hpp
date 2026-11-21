@@ -34,6 +34,8 @@ struct Options {
     bool maxdecals_off = true;    // graphics.maxdecals 0
     bool occlusion_on = true;     // graphics.occlusionculling true
     bool lowres = false;          // graphics.renderscale 0.85 (blurrier, more fps)
+    bool clouds_off = true;       // graphics.volumetricclouds false
+    bool fog_off = true;          // graphics.volumetricfog false
     bool gc_buffer = false;
     int gc_buffer_mb = 2048;
     bool net_backup = false;

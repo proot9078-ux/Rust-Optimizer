@@ -1,0 +1,137 @@
+; Rust Optimizer installer (NSIS 3.x, Unicode).
+; Per-user install: no UAC prompt, no admin rights, files go to
+; %LOCALAPPDATA%\Programs\RustOptimizer and a desktop shortcut is created.
+;
+; Build (CI passes the variables explicitly):
+;   makensis /DAPP_VERSION=8.2.1 /DAPP_EXE=..\build\Release\RustOptimizer.exe ^
+;            /DOUT_EXE=..\build\RustOptimizer-Setup-8.2.1.exe installer\RustOptimizer.nsi
+
+Unicode true
+ManifestDPIAware true
+
+!ifndef APP_VERSION
+  !define APP_VERSION "8.2.1"
+!endif
+!ifndef APP_EXE
+  !define APP_EXE "..\build\Release\RustOptimizer.exe"
+!endif
+!ifndef OUT_EXE
+  !define OUT_EXE "..\build\RustOptimizer-Setup-${APP_VERSION}.exe"
+!endif
+
+!define APP_NAME "Rust Optimizer"
+!define APP_PUBLISHER "Rust Optimizer"
+!define APP_ID "RustOptimizer"
+!define APP_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
+!define INSTALL_DIR "$LOCALAPPDATA\Programs\${APP_ID}"
+
+Name "${APP_NAME} ${APP_VERSION}"
+OutFile "${OUT_EXE}"
+InstallDir "${INSTALL_DIR}"
+InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
+RequestExecutionLevel user
+SetCompressor /SOLID lzma
+BrandingText "${APP_NAME} ${APP_VERSION} — безопасная оптимизация без банов"
+
+!include "MUI2.nsh"
+!include "FileFunc.nsh"
+!include "LogicLib.nsh"
+
+!define MUI_ICON "..\assets\rust-optimizer.ico"
+!define MUI_UNICON "..\assets\rust-optimizer.ico"
+!define MUI_ABORTWARNING
+!define MUI_FINISHPAGE_RUN "$INSTDIR\RustOptimizer.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Запустить Rust Optimizer"
+!define MUI_FINISHPAGE_LINK "GitHub проекта"
+!define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/proot9078-ux/Rust-Optimizer"
+
+!define MUI_WELCOMEPAGE_TITLE "Установка ${APP_NAME} ${APP_VERSION}"
+!define MUI_WELCOMEPAGE_TEXT "Оптимизатор RUST и FORTNITE: конфиги, кэши, параметры запуска и системные твики.$\r$\n$\r$\nВсё обратимо: перед каждым изменением создаётся резервная копия. Установка не требует прав администратора."
+!define MUI_DIRECTORYPAGE_TEXT_TOP "Программа будет установлена в папку ниже. Ярлык появится на рабочем столе и в меню «Пуск»."
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "Russian"
+!insertmacro MUI_LANGUAGE "English"
+
+; ---------------------------------------------------------------- helpers
+!macro KillRunning
+  DetailPrint "Закрываю запущенный оптимизатор…"
+  nsExec::Exec 'taskkill /IM RustOptimizer.exe /F'
+  Pop $0
+!macroend
+
+; Remove files from a previous install before copying new ones, but keep the
+; user's settings and backups (%LOCALAPPDATA%\RustOptimizer is separate).
+!macro CleanOldInstall
+  ${If} ${FileExists} "$INSTDIR\RustOptimizer.exe"
+    Delete "$INSTDIR\RustOptimizer.exe"
+  ${EndIf}
+!macroend
+
+Function .onInit
+  ; Refuse to run from a network path silently? No: keep it simple and robust.
+  SetShellVarContext current
+FunctionEnd
+
+Section "Rust Optimizer" SecMain
+  SectionIn RO
+  !insertmacro KillRunning
+
+  SetOutPath "$INSTDIR"
+  !insertmacro CleanOldInstall
+
+  File "/oname=RustOptimizer.exe" "${APP_EXE}"
+  File "/oname=LICENSE.txt" "..\LICENSE"
+  File "/oname=README.md" "..\README.md"
+  File "/oname=rust-optimizer.ico" "..\assets\rust-optimizer.ico"
+
+  ; Desktop + Start menu shortcuts.
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\RustOptimizer.exe" "" \
+                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "Оптимизатор RUST и FORTNITE"
+  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\RustOptimizer.exe" "" \
+                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "Оптимизатор RUST и FORTNITE"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\Удалить ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
+
+  ; Uninstaller + Add/Remove Programs entry.
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  WriteRegStr HKCU "Software\${APP_ID}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "${APP_KEY}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKCU "${APP_KEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "${APP_KEY}" "Publisher" "${APP_PUBLISHER}"
+  WriteRegStr HKCU "${APP_KEY}" "DisplayIcon" "$INSTDIR\rust-optimizer.ico"
+  WriteRegStr HKCU "${APP_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegStr HKCU "${APP_KEY}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
+  WriteRegDWORD HKCU "${APP_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${APP_KEY}" "NoRepair" 1
+
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  WriteRegDWORD HKCU "${APP_KEY}" "EstimatedSize" "$0"
+SectionEnd
+
+Section "Uninstall"
+  nsExec::Exec 'taskkill /IM RustOptimizer.exe /F'
+  Pop $0
+
+  Delete "$INSTDIR\RustOptimizer.exe"
+  Delete "$INSTDIR\LICENSE.txt"
+  Delete "$INSTDIR\README.md"
+  Delete "$INSTDIR\rust-optimizer.ico"
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir "$INSTDIR"
+
+  Delete "$DESKTOP\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\Удалить ${APP_NAME}.lnk"
+  RMDir "$SMPROGRAMS\${APP_NAME}"
+
+  DeleteRegKey HKCU "${APP_KEY}"
+  DeleteRegKey HKCU "Software\${APP_ID}"
+SectionEnd

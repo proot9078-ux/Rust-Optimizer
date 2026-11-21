@@ -105,6 +105,8 @@ std::map<std::string, bool> default_toggles() {
         {"rust.maxdecals_off", true},
         {"rust.occlusion_on", true},
         {"rust.lowres", false},
+        {"rust.clouds_off", true},
+        {"rust.fog_off", true},
         {"fortnite.unlimited_fps", true},
         {"fortnite.vsync_off", true},
         {"fortnite.fullscreen", true},
@@ -299,6 +301,12 @@ std::vector<Page> build_pages(const PageContext& ctx) {
         p.rows.push_back(toggle_row("lowres", L"Рендер в 85% разрешения",
                                     L"graphics.renderscale 0.85 — заметный прирост FPS, картинка мягче.",
                                     on(t, "rust", "lowres", false)));
+        p.rows.push_back(toggle_row("clouds_off", L"Отключить объёмные облака",
+                                    L"graphics.volumetricclouds false — убирает самую дорогую часть неба.",
+                                    on(t, "rust", "clouds_off")));
+        p.rows.push_back(toggle_row("fog_off", L"Отключить объёмный туман",
+                                    L"graphics.volumetricfog false — меньше fill-rate на погодных эффектах.",
+                                    on(t, "rust", "fog_off")));
         p.rows.push_back(section("perf", L"ПРОИЗВОДИТЕЛЬНОСТЬ"));
         p.rows.push_back(toggle_row("gc_buffer", L"Увеличить буфер сборщика мусора",
                                     L"gc.buffer 2048 для 16 ГБ RAM, 4096 для 32 ГБ. Реже микрофризы при длинных сессиях.",

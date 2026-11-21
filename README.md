@@ -74,11 +74,18 @@ Every change is reversible:
 
 ## Install
 
-1. Download `RustOptimizer-win64.zip` from
+The easiest way is the installer:
+
+1. Download `RustOptimizer-Setup-<version>.exe` from
    [Releases](https://github.com/proot9078-ux/Rust-Optimizer/releases/latest).
-2. Extract anywhere and run `RustOptimizer.exe`.
+2. Run it — no administrator rights required. It installs into
+   `%LOCALAPPDATA%\Programs\RustOptimizer`, creates desktop and Start-menu
+   shortcuts and registers a normal uninstaller.
 3. Press **Найти игры** — Steam/Epic installs are located through the registry,
    `libraryfolders.vdf`, `appmanifest_252490.acf` and Epic manifests.
+
+Portable alternative: download `RustOptimizer-win64.zip`, extract anywhere and
+run `RustOptimizer.exe`.
 
 Optional: run as administrator to unlock the standby-list purge.
 

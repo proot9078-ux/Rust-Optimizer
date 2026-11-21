@@ -62,6 +62,24 @@ jobs:
           "ZIP=$zip"                                | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "EXE=$exe"                                | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            Write-Host "NSIS not found, installing via Chocolatey"
+            choco install nsis -y --no-progress
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis.exe not found" }
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
+          $exe = Join-Path $env:BUILD_DIR "$env:CONFIG\RustOptimizer.exe"
+          $setup = Join-Path $env:RUNNER_TEMP "RustOptimizer-Setup-$version.exe"
+          & $makensis /V2 /INPUTCHARSET UTF8 /DAPP_VERSION=$version "/DAPP_EXE=$exe" "/DOUT_EXE=$setup" installer\RustOptimizer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }
+          $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+          "$hash  RustOptimizer-Setup-$version.exe" | Out-File -Append -Encoding ascii (Join-Path $env:RUNNER_TEMP "SHA256SUMS.txt")
+          "SETUP=$setup" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -69,6 +87,7 @@ jobs:
           path: |
             ${{ env.ZIP }}
             ${{ env.EXE }}
+            ${{ env.SETUP }}
             ${{ runner.temp }}/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -81,4 +100,5 @@ jobs:
           files: |
             ${{ env.ZIP }}
             ${{ env.EXE }}
+            ${{ env.SETUP }}
             ${{ runner.temp }}/SHA256SUMS.txt
