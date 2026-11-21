@@ -9,6 +9,12 @@
 Unicode true
 ManifestDPIAware true
 
+; CI passes /DRO_CI_DEFINES and writes installer\defines.nsh with the absolute
+; build paths (forward slashes); makensis mangles Windows paths given via /D.
+!ifdef RO_CI_DEFINES
+  !include "defines.nsh"
+!endif
+
 !ifndef APP_VERSION
   !define APP_VERSION "8.2.1"
 !endif

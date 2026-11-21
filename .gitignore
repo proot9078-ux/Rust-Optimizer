@@ -37,3 +37,4 @@ CMakeCache.txt
 # Local runtime data (never part of the repo)
 state.xml
 rust-optimizer.log
+installer/defines.nsh

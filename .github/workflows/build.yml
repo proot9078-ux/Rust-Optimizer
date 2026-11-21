@@ -72,9 +72,16 @@ jobs:
           }
           if (-not (Test-Path $makensis)) { throw "makensis.exe not found" }
           $version = (Select-String -Path CMakeLists.txt -Pattern 'VERSION\s+(\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
-          $exe = Join-Path $env:BUILD_DIR "$env:CONFIG\RustOptimizer.exe"
+          $exe = (Resolve-Path (Join-Path $env:BUILD_DIR "$env:CONFIG\RustOptimizer.exe")).Path
           $setup = Join-Path $env:RUNNER_TEMP "RustOptimizer-Setup-$version.exe"
-          & $makensis /V2 /INPUTCHARSET UTF8 /DAPP_VERSION=$version "/DAPP_EXE=$exe" "/DOUT_EXE=$setup" installer\RustOptimizer.nsi
+          # Keep paths in a generated include: makensis parses /D arguments
+          # itself and mangles Windows paths containing backslashes.
+          $nsisPath = { param($p) (Resolve-Path $p).Path }
+          @(
+            "!define APP_EXE `"$(& $nsisPath $exe)`"",
+            "!define OUT_EXE `"$setup`""
+          ) | Set-Content -Encoding ascii installer\defines.nsh
+          & $makensis /V2 /INPUTCHARSET UTF8 /DRO_CI_DEFINES /DAPP_VERSION=$version installer\RustOptimizer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }
           $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
           "$hash  RustOptimizer-Setup-$version.exe" | Out-File -Append -Encoding ascii (Join-Path $env:RUNNER_TEMP "SHA256SUMS.txt")
