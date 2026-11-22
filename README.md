@@ -58,6 +58,10 @@ Every change is reversible:
 ## Safety
 
 * No injection, no hooks, no memory reads/writes, no overlays.
+* RUST tweaks only edit `client.cfg` and Steam's own `localconfig.vdf`; grass,
+  volumetric clouds and volumetric fog are switched off through documented
+  game cvars, which Easy Anti-Cheat sees as ordinary config — the Zero-Ban
+  policy is unchanged by the graphics changes.
 * Priorities are capped at `HIGH_PRIORITY_CLASS`; `REALTIME` is never used.
 * No `system()` / `cmd.exe` calls — only `CreateProcessW` with
   `CREATE_NO_WINDOW`.
