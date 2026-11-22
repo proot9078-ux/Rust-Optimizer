@@ -41,9 +41,10 @@ TEST_CASE("volumetrics default to off and quality defaults to minimum", "[rust]"
     REQUIRE_FALSE(defaults.lowres);
 }
 
-TEST_CASE("launch options mention the right buffer for 16 GB", "[rust]") {
+TEST_CASE("launch options leave headroom for Windows on 16 GB", "[rust]") {
     const auto opts = ro::rust::recommended_launch_options(16384, "nvidia");
     REQUIRE(opts.find("-high") != std::string::npos);
-    REQUIRE(opts.find("-maxMem=16384") != std::string::npos);
+    REQUIRE(opts.find("-maxMem=12288") != std::string::npos);
+    REQUIRE(opts.find("-maxMem=16384") == std::string::npos);
     REQUIRE(opts.find("-gc.buffer 2048") != std::string::npos);
 }

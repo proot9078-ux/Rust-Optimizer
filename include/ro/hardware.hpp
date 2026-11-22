@@ -19,6 +19,9 @@ struct HardwareInfo {
     unsigned physical_cores = 0;
     std::uint64_t ram_bytes = 0;
     GpuInfo gpu;
+    unsigned refresh_hz = 0;       // primary display refresh rate, 0 if unknown
+    unsigned desktop_width = 0;
+    unsigned desktop_height = 0;
     std::wstring os;
     std::wstring os_display;   // "Windows 11 24H2 (build 26100)"
     bool hags_supported = false;

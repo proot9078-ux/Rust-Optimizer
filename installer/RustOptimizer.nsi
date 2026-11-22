@@ -1,4 +1,4 @@
-; Rust Optimizer installer (NSIS 3.x, Unicode).
+﻿; Rust Optimizer installer (NSIS 3.x, Unicode).
 ; Per-user install: no UAC prompt, no admin rights, files go to
 ; %LOCALAPPDATA%\Programs\RustOptimizer and a desktop shortcut is created.
 ;
@@ -16,7 +16,7 @@ ManifestDPIAware true
 !endif
 
 !ifndef APP_VERSION
-  !define APP_VERSION "8.2.1"
+  !define APP_VERSION "8.2.2"
 !endif
 !ifndef APP_EXE
   !define APP_EXE "..\build\Release\RustOptimizer.exe"
@@ -37,7 +37,7 @@ InstallDir "${INSTALL_DIR}"
 InstallDirRegKey HKCU "Software\${APP_ID}" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-BrandingText "${APP_NAME} ${APP_VERSION} — безопасная оптимизация без банов"
+BrandingText "${APP_NAME} ${APP_VERSION} вЂ” Р±РµР·РѕРїР°СЃРЅР°СЏ РѕРїС‚РёРјРёР·Р°С†РёСЏ Р±РµР· Р±Р°РЅРѕРІ"
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -47,13 +47,13 @@ BrandingText "${APP_NAME} ${APP_VERSION} — безопасная оптимиз
 !define MUI_UNICON "..\assets\rust-optimizer.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\RustOptimizer.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Запустить Rust Optimizer"
-!define MUI_FINISHPAGE_LINK "GitHub проекта"
+!define MUI_FINISHPAGE_RUN_TEXT "Р—Р°РїСѓСЃС‚РёС‚СЊ Rust Optimizer"
+!define MUI_FINISHPAGE_LINK "GitHub РїСЂРѕРµРєС‚Р°"
 !define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/proot9078-ux/Rust-Optimizer"
 
-!define MUI_WELCOMEPAGE_TITLE "Установка ${APP_NAME} ${APP_VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "Оптимизатор RUST и FORTNITE: конфиги, кэши, параметры запуска и системные твики.$\r$\n$\r$\nВсё обратимо: перед каждым изменением создаётся резервная копия. Установка не требует прав администратора."
-!define MUI_DIRECTORYPAGE_TEXT_TOP "Программа будет установлена в папку ниже. Ярлык появится на рабочем столе и в меню «Пуск»."
+!define MUI_WELCOMEPAGE_TITLE "РЈСЃС‚Р°РЅРѕРІРєР° ${APP_NAME} ${APP_VERSION}"
+!define MUI_WELCOMEPAGE_TEXT "РћРїС‚РёРјРёР·Р°С‚РѕСЂ RUST Рё FORTNITE: РєРѕРЅС„РёРіРё, РєСЌС€Рё, РїР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСѓСЃРєР° Рё СЃРёСЃС‚РµРјРЅС‹Рµ С‚РІРёРєРё.$\r$\n$\r$\nР’СЃС‘ РѕР±СЂР°С‚РёРјРѕ: РїРµСЂРµРґ РєР°Р¶РґС‹Рј РёР·РјРµРЅРµРЅРёРµРј СЃРѕР·РґР°С‘С‚СЃСЏ СЂРµР·РµСЂРІРЅР°СЏ РєРѕРїРёСЏ. РЈСЃС‚Р°РЅРѕРІРєР° РЅРµ С‚СЂРµР±СѓРµС‚ РїСЂР°РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°."
+!define MUI_DIRECTORYPAGE_TEXT_TOP "РџСЂРѕРіСЂР°РјРјР° Р±СѓРґРµС‚ СѓСЃС‚Р°РЅРѕРІР»РµРЅР° РІ РїР°РїРєСѓ РЅРёР¶Рµ. РЇСЂР»С‹Рє РїРѕСЏРІРёС‚СЃСЏ РЅР° СЂР°Р±РѕС‡РµРј СЃС‚РѕР»Рµ Рё РІ РјРµРЅСЋ В«РџСѓСЃРєВ»."
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -68,7 +68,7 @@ BrandingText "${APP_NAME} ${APP_VERSION} — безопасная оптимиз
 
 ; ---------------------------------------------------------------- helpers
 !macro KillRunning
-  DetailPrint "Закрываю запущенный оптимизатор…"
+  DetailPrint "Р—Р°РєСЂС‹РІР°СЋ Р·Р°РїСѓС‰РµРЅРЅС‹Р№ РѕРїС‚РёРјРёР·Р°С‚РѕСЂвЂ¦"
   nsExec::Exec 'taskkill /IM RustOptimizer.exe /F'
   Pop $0
 !macroend
@@ -100,11 +100,11 @@ Section "Rust Optimizer" SecMain
 
   ; Desktop + Start menu shortcuts.
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\RustOptimizer.exe" "" \
-                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "Оптимизатор RUST и FORTNITE"
+                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "РћРїС‚РёРјРёР·Р°С‚РѕСЂ RUST Рё FORTNITE"
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\RustOptimizer.exe" "" \
-                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "Оптимизатор RUST и FORTNITE"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\Удалить ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
+                 "$INSTDIR\rust-optimizer.ico" 0 SW_SHOWNORMAL "" "РћРїС‚РёРјРёР·Р°С‚РѕСЂ RUST Рё FORTNITE"
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\РЈРґР°Р»РёС‚СЊ ${APP_NAME}.lnk" "$INSTDIR\Uninstall.exe"
 
   ; Uninstaller + Add/Remove Programs entry.
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -135,7 +135,7 @@ Section "Uninstall"
 
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
-  Delete "$SMPROGRAMS\${APP_NAME}\Удалить ${APP_NAME}.lnk"
+  Delete "$SMPROGRAMS\${APP_NAME}\РЈРґР°Р»РёС‚СЊ ${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
 
   DeleteRegKey HKCU "${APP_KEY}"

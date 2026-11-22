@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required(VERSION 3.21)
 
 project(RustOptimizer
-        VERSION 8.2.1
+        VERSION 8.2.2
         DESCRIPTION "Rust Optimizer - external performance engine for RUST and FORTNITE"
         LANGUAGES C CXX RC)
 
@@ -77,6 +77,7 @@ set(RO_CORE_SOURCES
     src/core/settings.cpp
     src/core/hardware.cpp
     src/core/cleaner.cpp
+src/core/tuning.cpp
     src/core/diagnostics.cpp
     src/core/visuals.cpp
     src/core/win_repair.cpp
@@ -194,6 +195,7 @@ if(RO_BUILD_TESTS)
       tests/test_visuals.cpp
     tests/test_cleaner.cpp
     tests/test_rust_options.cpp
+tests/test_tuning.cpp
       third_party/catch_amalgamated.cpp)
   target_include_directories(ro_tests PRIVATE include third_party tests)
   target_link_libraries(ro_tests PRIVATE ro_core)

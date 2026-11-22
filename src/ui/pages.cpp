@@ -6,6 +6,7 @@
 #include "ro/cleaner.hpp"
 #include "ro/memory.hpp"
 #include "ro/str.hpp"
+#include "ro/tuning.hpp"
 #include "ro/ui/theme.hpp"
 #include "ro/version.hpp"
 #include "ro/visuals.hpp"
@@ -198,6 +199,8 @@ std::vector<Page> build_pages(const PageContext& ctx) {
                                            str::human_bytes_w(snap.available_bytes)
                                      : L"—"));
         p.rows.push_back(info("os", L"Система", ctx.hw ? ctx.hw->os_display : L"—"));
+        p.rows.push_back(info("tune", L"Настройка под ваш ПК",
+                              ctx.hw ? tuning::tune(*ctx.hw).summary : L"—"));
 
         p.rows.push_back(section("quick", L"БЫСТРЫЕ ДЕЙСТВИЯ"));
         p.rows.push_back(button("boost", L"БУСТ FPS · ВСЁ · RUST · ЗАКРЫТЬСЯ", "boost_fps", true,

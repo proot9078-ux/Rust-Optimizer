@@ -36,6 +36,7 @@
 #include "ro/steam_launch.hpp"
 #include "ro/str.hpp"
 #include "ro/system_tweaks.hpp"
+#include "ro/tuning.hpp"
 #include "ro/ui/pages.hpp"
 #include "ro/ui/theme.hpp"
 #include "ro/ui/widgets.hpp"
@@ -1266,9 +1267,9 @@ private:
         o.clouds_off = get("clouds_off", true);
         o.fog_off = get("fog_off", true);
         o.gc_buffer = get("gc_buffer", false);
-        o.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024 * 1024 * 1024 ? 4096 : 2048;
-        o.launch_options = rust::recommended_launch_options(
-            static_cast<unsigned>(state_->hw.ram_bytes / (1024 * 1024)), state_->hw.gpu.vendor);
+        const auto profile = tuning::tune(state_->hw);
+        o.gc_buffer_mb = profile.gc_buffer_mb;
+        o.launch_options = profile.launch_options;
         return o;
     }
 
@@ -1289,7 +1290,7 @@ private:
         o.shadow_tweak = get("shadow_tweak", true);
         o.streaming_pool = get("streaming_pool", true);
         o.dynamic_res_off = get("dynamic_res_off", false);
-        o.pool_size_mb = state_->hw.gpu.vram_bytes >= 8ull * 1024 * 1024 * 1024 ? 4096 : 2048;
+        o.pool_size_mb = tuning::tune(state_->hw).pool_size_mb;
         return o;
     }
 
@@ -1742,9 +1743,9 @@ private:
         }
         if (id == "apply_launch_options" || id == "revert_launch_options") {
             const auto steam_dir = state_->games.steam.steam_dir;
-            const unsigned ram_mb = static_cast<unsigned>(state_->hw.ram_bytes / (1024ull * 1024ull));
+            const unsigned ram_mb = tuning::tune(state_->hw).ram_mb;
             const std::string vendor = state_->hw.gpu.vendor;
-            const bool gc_4gb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull;
+            const bool gc_4gb = tuning::tune(state_->hw).gc_buffer_mb >= 4096;
             const bool revert = id == "revert_launch_options";
             run_async(revert ? L"Возвращаю параметры запуска Steam…" : L"Записываю параметры запуска в Steam…",
                       [steam_dir, ram_mb, vendor, gc_4gb, revert]() -> std::wstring {
@@ -1813,18 +1814,18 @@ private:
                 rust_opt.quality_low = true;
                 rust_opt.maxdecals_off = true;
                 rust_opt.occlusion_on = true;
-                rust_opt.lowres = false;  // keep native resolution: no blur
+                rust_opt.lowres = tuning::tune(state_->hw).lowres;
                 rust_opt.clouds_off = true;
                 rust_opt.fog_off = true;
-                rust_opt.gc_buffer = false;
-                rust_opt.gc_buffer_mb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull ? 4096 : 2048;
+                rust_opt.gc_buffer = true;
+                rust_opt.gc_buffer_mb = tuning::tune(state_->hw).gc_buffer_mb;
             }
             const auto fn_opt = fortnite_options();
             const auto fn_exe = state_->games.fortnite.exe_path;
             const auto steam_dir = state_->games.steam.steam_dir;
-            const unsigned ram_mb = static_cast<unsigned>(state_->hw.ram_bytes / (1024ull * 1024ull));
+            const unsigned ram_mb = tuning::tune(state_->hw).ram_mb;
             const std::string vendor = state_->hw.gpu.vendor;
-            const bool gc_4gb = state_->hw.ram_bytes >= 32ull * 1024ull * 1024ull * 1024ull;
+            const bool gc_4gb = tuning::tune(state_->hw).gc_buffer_mb >= 4096;
             const bool purge = boost || is_on("system", "purge_on_apply");
             const bool dvr_off = boost || is_on("system", "dvr_off");
             const bool game_mode = boost || is_on("system", "game_mode_on");
@@ -2242,6 +2243,12 @@ int selftest() {
     line(L"RAM:       " + str::human_bytes_w(hw.ram_bytes));
     line(L"GPU:       " + hw.gpu.name + L" [" + str::widen(hw.gpu.vendor) + L", " +
          str::human_bytes_w(hw.gpu.vram_bytes) + L" VRAM]");
+    if (hw.desktop_width > 0) {
+        line(L"Display:   " + std::to_wstring(hw.desktop_width) + L"x" +
+             std::to_wstring(hw.desktop_height) +
+             (hw.refresh_hz > 0 ? L" @ " + std::to_wstring(hw.refresh_hz) + L" Hz" : L""));
+    }
+    line(L"Tuning:    " + tuning::tune(hw).summary);
 
     const auto topo = cpu::detect();
     line(L"Topology:  " + topo.summary);

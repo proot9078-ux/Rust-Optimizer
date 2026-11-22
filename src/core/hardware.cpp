@@ -83,6 +83,15 @@ HardwareInfo gather() {
         });
     }
 
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (::EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm)) {
+        hw.desktop_width = dm.dmPelsWidth;
+        hw.desktop_height = dm.dmPelsHeight;
+        // Some virtual/remote adapters report 0 or 1 Hz.
+        hw.refresh_hz = dm.dmDisplayFrequency >= 24 ? dm.dmDisplayFrequency : 0;
+    }
+
     hw.os = win::windows_build_string();
     const bool win11 = win::is_windows_11();
     hw.os_display = (win11 ? L"Windows 11" : L"Windows 10") + std::wstring(L" · ") + hw.os;

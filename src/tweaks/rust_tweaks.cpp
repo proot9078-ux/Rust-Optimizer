@@ -7,6 +7,7 @@
 #include "ro/backup.hpp"
 #include "ro/fs.hpp"
 #include "ro/log.hpp"
+#include "ro/steam_launch.hpp"
 #include "ro/str.hpp"
 #include "ro/version.hpp"
 
@@ -392,16 +393,10 @@ ApplyReport revert(const Paths& p, const std::filesystem::path& backup_dir) {
 }
 
 std::string recommended_launch_options(unsigned ram_mb, const std::string& gpu_vendor) {
-    std::string out = "-high";
-    if (ram_mb > 0) out += " -maxMem=" + std::to_string(ram_mb);
-    out += " -malloc=system";
-    if (gpu_vendor == "intel") out += " -force-d3d11";
-    if (ram_mb >= 32000) {
-        out += " -gc.buffer 4096";
-    } else if (ram_mb >= 15000) {
-        out += " -gc.buffer 2048";
-    }
-    return out;
+    // Single source of truth: the same routine that writes Steam's
+    // localconfig.vdf, so the UI can never show a different string.
+    const bool gc_4gb = ram_mb >= 30000u;
+    return steam_launch::recommended(ram_mb, gpu_vendor, gc_4gb);
 }
 
 }  // namespace ro::rust

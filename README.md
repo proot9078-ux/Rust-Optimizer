@@ -24,7 +24,7 @@ PowerShell runtime, no external dependencies.
 
 | Page | What it does |
 |---|---|
-| **Обзор** | Hardware summary, detected game paths, **БУСТ FPS** (one click: clean every cache, apply everything, launch RUST, close itself), autopilot, game launch, standby purge |
+| **Обзор** | Hardware summary, the derived tuning profile (RAM → `gc.buffer`, `-maxMem`, texture pool, render scale), detected game paths, **БУСТ FPS** (one click: clean every cache, apply everything, launch RUST, close itself), autopilot, game launch, standby purge |
 | **RUST** | `client.cfg` tweaks (grass, SSAA, shadows, VSync, pixel light, DOF, motion blur, parallax, light shafts, chromatic aberration, quality sliders, decals, occlusion culling, GC buffer), Steam Launch Options writer (`localconfig.vdf`) with revert, picture presets + NVIDIA panel shortcut, `.rop` profile import/export |
 | **FORTNITE** | `GameUserSettings.ini` + `Engine.ini` tweaks (frame limit, VSync, fullscreen, motion blur, bloom, lens flare, DOF, shadows, streaming pool), launch options |
 | **Система** | Standby-list purge, Game DVR, Game Mode, HAGS, power scheme, DNS flush, TCP autotuning, fullscreen optimizations, CPU affinity, SFC + DISM repair |
